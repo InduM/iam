@@ -8,7 +8,10 @@ import os
 
 # Load environment variables
 load_dotenv()
-MONGO_URI = os.getenv("MONGO_URI")
+#MONGO_URI = os.getenv("MONGO_URI")
+# Load MongoDB URI from Streamlit secrets
+MONGO_URI = st.secrets["MONGO_URI"]
+
 
 # Connect to MongoDB Atlas
 client = pymongo.MongoClient(MONGO_URI)
