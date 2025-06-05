@@ -2,7 +2,8 @@
 import streamlit as st
 from utils import check_login
 
-def login():
+#def login():
+def run():
     st.title("Login")
 
     username = st.text_input("Username")
