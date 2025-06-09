@@ -10,11 +10,6 @@ def logout_user():
 def is_logged_in():
     return st.session_state.get("logged_in", False)
 
-def show_sidebar():
-    with st.sidebar:
-        st.page_link("pages/Profile.py", label="Profile", icon="🏠")
-        st.page_link("pages/Log.py", label="Log", icon="👤")
-        st.button("🚪 Logout", on_click=logout_user)
 
 def login_user(username, password):
     # Replace this with your auth logic
