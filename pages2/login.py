@@ -7,7 +7,10 @@ def run():
 
     st.markdown("""
     <style>
-    
+    .centered {
+        align-items: center;
+        padding: 0 1rem;
+    }
     @media (max-width: 600px) {
         .login-box {
             padding: 1.5rem;
