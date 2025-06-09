@@ -1,6 +1,5 @@
 import streamlit as st
 from utils import is_logged_in
-from utils import show_sidebar
 from datetime import datetime,date
 import pandas as pd
 
@@ -9,26 +8,29 @@ def run():
     if not is_logged_in():
         st.switch_page("option.py")
 
-
     st.title("📘 Everyday Log (Tabular + Summary by Date)")
 
     log_columns = [
-        ("Date", 150),
-        ("Time", 120),
-        ("Activity", 200),
-        ("Duration (mins)", 150),
-        ("Mood", 150),
-        ("Notes", 300)
+        ("Date",200),
+        ("Time", 200),
+        ("Project Name",200),
+        ("Client Name",200),
+        ("Priority", 200),
+        ("Description", 200),
+        ("Category", 300),
+        ("Follow up", 300)
     ]
 
     def create_default_log(selected_date=None):
         return {
             "Date": selected_date or datetime.today().date(),
             "Time": datetime.now().time().replace(second=0, microsecond=0),
-            "Activity": "",
-            "Duration (mins)": "",
-            "Mood": "",
-            "Notes": ""
+            "Project Name":"",
+            "Client Name": "",
+            "Priority": "",
+            "Description":"",
+            "Category":"",
+            "Follow up": ""
         }
 
     if "logs" not in st.session_state:
@@ -93,7 +95,7 @@ def run():
         for i, log in enumerate(st.session_state.logs):
             if log["Date"] != selected_date:
                 continue
-            row_cols = st.columns([w for _, w in log_columns] + [80])
+            row_cols = st.columns([w for _, w in log_columns]+[50])
             for j, (col, _) in enumerate(log_columns):
                 key = f"{col}_{i}"
                 with row_cols[j]:
@@ -102,15 +104,22 @@ def run():
                         log[col] = st.date_input("", value=log[col], key=key)
                     elif col == "Time":
                         log[col] = st.time_input("", value=log[col], key=key)
-                    elif col == "Notes":
-                        lines = log[col].count('\n') + 1
-                        log[col] = st.text_area("", value=log[col], key=key)
+                    elif col == "Priority":
+                        priority_options = ["Low", "Medium", "High"]
+                        log[col] = st.selectbox("", options=priority_options, key=key)
+                    elif col == "Category":
+                        category_options = ["Audit-Accessibility", "Audit-Policy", "Training-Onwards","Training-Regular","Sessions-Kiosk","Sessions-Sensitization","Sessions-Awareness","Other"]
+                        log[col] = st.selectbox("", options=category_options, key=key)
+                    elif col == "Client Name " or col == "Project Name":
+                        log[col] = st.text_input("",value = log[col],key = key)
                     else:
-                        log[col] = st.text_input("", value=log[col], key=key)
+                        log[col] = st.text_area("", value=log[col], key=key)
                     st.markdown("</div>", unsafe_allow_html=True)
             if row_cols[-1].button("🗑️", key=f"delete_{i}"):
                 delete_log_row(row_counter)
                 st.rerun()
+
+
             row_counter += 1
 
         st.markdown('</div></div>', unsafe_allow_html=True)
