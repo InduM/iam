@@ -90,8 +90,12 @@ def run():
                         priority_options = ["Low", "Medium", "High"]
                         log[col] = st.selectbox("", options=priority_options, key=key)
                     elif col == "Category":
-                        category_options = ["Audit-Accessibility", "Audit-Policy", "Training-Onwards","Training-Regular","Sessions-Kiosk","Sessions-Sensitization","Sessions-Awareness","Other"]
+                        category_options = ["Audit-Physical","Audit-Digital","Audit-Design","Audit-Accessibility", "Audit-Policy", "Training-Onwards","Training-Regular","Sessions-Kiosk","Sessions-Sensitization","Sessions-Awareness","Recruitment","Other"]
                         log[col] = st.selectbox("", options=category_options, key=key)
+                        if log[col] == "Other":
+                            custom_mood = st.text_input("Specify Other")
+                            log[col] = custom_mood
+
                     elif col == "Client Name " or col == "Project Name":
                         log[col] = st.text_input("",value = log[col],key = key)
                     else:

@@ -68,7 +68,7 @@ if not st.session_state.authenticated:
 else:
     with st.sidebar:
         selected = option_menu(
-            "Vshesh",
+            "v-shesh",
             ["Profile", "Documents", "Log","Logout"],
             icons=["person", "gear", "box-arrow-left","box-arrow-right"],
             menu_icon="cast",
