@@ -13,7 +13,8 @@ def is_logged_in():
 
 def login_user(username, password):
     # Replace this with your auth logic
-    if username == "admin" and password == "1234":
-        st.session_state["logged_in"] = True
-        return True
-    return False
+    #if username == "admin" and password == "1234":
+    #    st.session_state["logged_in"] = True
+    #    return True
+    #return False
+    return True
