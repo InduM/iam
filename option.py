@@ -15,45 +15,54 @@ def load_page(module_name):
     module = importlib.import_module(f"pages2.{module_name}")
     module.run()
 
+st.set_page_config(layout="centered")
+# Custom CSS for mobile-friendly UI
 st.markdown("""
     <style>
-    /* Mobile font and layout tweaks */
-    @media (max-width: 768px) {
-        .block-container {
-            padding: 1rem 0.5rem;
-        }
-        .element-container {
-            margin-bottom: 1rem !important;
-        }
-        input, textarea, select {
-            font-size: 16px !important;
-        }
-        label {
-            font-size: 15px !important;
-        }
-    }
-    
-    /* Ensure scroll containers on mobile work well */
-    .scroll-container {
-        overflow-x: auto;
-        white-space: nowrap;
-        padding-bottom: 10px;
-        border: 1px solid #ddd;
+    html, body, [class*="css"] {
+        font-family: 'Segoe UI', sans-serif;
     }
 
-    .block-container {
-        min-width: 1100px;
-        display: inline-block;
+    .login-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 90vh;
+        padding: 1rem;
     }
 
-    /* Prevent layout issues with checkboxes on small screens */
-    .stCheckbox > div {
-        padding-top: 5px;
+    .login-box {
+        background: #ffffff;
+        padding: 2rem;
+        border-radius: 16px;
+        max-width: 350px;
+        width: 100%;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .stTextInput > div > div > input,
+    .stTextInput input {
+        text-align: center;
+        font-size: 16px;
+    }
+
+    @media (max-width: 600px) {
+        .login-box {
+            padding: 1.5rem;
+        }
+    }
+
+    .form-title {
+        text-align: center;
+        margin-bottom: 1.5rem;
+        color: #333;
+    }
+
+    .btn-login {
+        width: 100%;
     }
     </style>
 """, unsafe_allow_html=True)
-
-
 # Navigation
 if not st.session_state.authenticated:
     load_page("login")

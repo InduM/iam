@@ -5,10 +5,14 @@ import pandas as pd
 
 
 def run():
+     # ➕ Add/Delete Log Row for selected date
+    def add_log_row():
+        st.session_state.logs.append(create_default_log(selected_date))
+
     if not is_logged_in():
         st.switch_page("option.py")
 
-    st.title("📘 Everyday Log (Tabular + Summary by Date)")
+    st.title("📘 Everyday Log")
 
     log_columns = [
         ("Date",200),
@@ -37,7 +41,13 @@ def run():
         st.session_state.logs = []
 
     # 📅 Date Filter
-    selected_date = st.date_input("📅 Select a date to view/edit logs:", date.today())
+    # Row: Date selector + Add Row button side by side
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        selected_date = st.date_input("",date.today(),label_visibility="collapsed")
+    with col2:
+        st.button("➕ Log", on_click=add_log_row)
+
     filtered_logs = [log for log in st.session_state.logs if log["Date"] == selected_date]
 
     # Add default row if none exist for selected date
@@ -45,41 +55,13 @@ def run():
         new_log = create_default_log(selected_date)
         st.session_state.logs.append(new_log)
         filtered_logs = [new_log]
-
-    # 🔧 CSS for scroll and layout
-    st.markdown("""
-        <style>
-        .scroll-container {
-            overflow-x: auto;
-            white-space: nowrap;
-            padding-bottom: 10px;
-            border: 1px solid #ddd;
-        }
-        .block-container {
-            min-width: 1100px;
-            display: inline-block;
-        }
-        .column-header {
-            font-weight: bold;
-            padding: 6px 4px;
-        }
-        .column-input input, .column-input textarea {
-            width: 100% !important;
-            min-height: 38px;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
-    # ➕ Add/Delete Log Row for selected date
-    def add_log_row():
-        st.session_state.logs.append(create_default_log(selected_date))
-
+    
+   
     def delete_log_row(index):
         logs_on_selected_date = [i for i, log in enumerate(st.session_state.logs) if log["Date"] == selected_date]
         if index < len(logs_on_selected_date):
             del st.session_state.logs[logs_on_selected_date[index]]
 
-    st.button("➕ Add Log", on_click=add_log_row)
 
     # 🎯 Editable Log Table for Selected Date
     st.markdown("#### 📝 Logs for Selected Date")

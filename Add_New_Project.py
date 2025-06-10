@@ -4,6 +4,10 @@ from datetime import datetime
 st.set_page_config(page_title="Add New Project", layout="centered")
 
 st.title("➕ Add New Project")
+EMPLOYEES = ["Alice", "Bob", "Charlie", "David", "Eva"]
+LOCATIONS = ["San Francisco", "New York", "Remote", "London", "Bangalore"]
+
+
 
 with st.form("new_project_form"):
     title = st.text_input("Project Title")

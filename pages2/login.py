@@ -4,7 +4,6 @@ from utils import check_login
 
 #def login():
 def run():
-
     st.markdown("""
     <style>
     .centered {
