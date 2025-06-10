@@ -33,7 +33,6 @@ st.markdown("""
 
     .login-box {
         background: #ffffff;
-        padding: 2rem;
         border-radius: 16px;
         max-width: 350px;
         width: 100%;
