@@ -12,7 +12,10 @@ if "edit_mode" not in st.session_state:
 
 # Dynamic loader
 def load_page(module_name):
-    module = importlib.import_module(f"pages2.{module_name}")
+    if module_name == "projects":
+        module = importlib.import_module(f"projects.project_home")
+    else:
+        module = importlib.import_module(f"pages2.{module_name}")
     module.run()
 
 st.set_page_config(layout="centered")
@@ -67,16 +70,33 @@ if not st.session_state.authenticated:
     load_page("login")
 else:
     with st.sidebar:
-        selected = option_menu(
-            "v-shesh",
-            ["Profile", "Documents", "Log","Logout"],
-            icons=["person", "gear", "box-arrow-left","box-arrow-right"],
-            menu_icon="cast",
-            default_index=0
-        )
+        if st.session_state["role"] == "user":
+            selected = option_menu(
+                "v-shesh",
+                ["Profile", "Documents", "Log","Logout"],
+                icons=["person", "file-earmark-richtext", "file-spreadsheet","box-arrow-right"],
+                menu_icon="cast",
+                default_index=0
+            )
+        elif st.session_state["role"] == "admin":
+            selected = option_menu(
+                "v-shesh",
+                ["Profile", "Documents", "Log","Logout"],
+                icons=["person", "file-earmark-richtext", "file-spreadsheet","box-arrow-right"],
+                menu_icon="cast",
+                default_index=0
+            )
+        elif st.session_state["role"] == "manager":
+            selected = option_menu(
+                "v-shesh",
+                ["Profile", "Documents", "Projects","Users","Log","Logout"],
+                icons=["person", "file-earmark-richtext", "file-spreadsheet","kanban","people","box-arrow-right"],
+                menu_icon="cast",
+                default_index=0
+            )
 
     if selected == "Logout":
         st.session_state.authenticated = False
         st.rerun()
     else:
-        load_page(selected.lower())  # Load 'profile' or 'settings'
+        load_page(selected.lower())  # Load 'profile' or 'settings'""
