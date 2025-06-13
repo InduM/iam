@@ -5,3 +5,5 @@ streamlit_option_menu
 plotly
 yagmail
 streamlit-autorefresh
+bcrypt
+certifi

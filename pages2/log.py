@@ -115,16 +115,3 @@ def run():
         st.success("Logs saved for this session!")
 
 
-    # 📊 Collapsible Summary by Date
-    st.markdown("## 📅 All Logs Summary (Grouped by Date)")
-    if st.session_state.logs:
-        df_all = pd.DataFrame(st.session_state.logs)
-        df_all["Date"] = pd.to_datetime(df_all["Date"]).dt.date
-        grouped = df_all.groupby("Date")
-
-        for date_group, group_df in sorted(grouped, reverse=True):
-            with st.expander(f"📂 {date_group} ({len(group_df)} logs)"):
-                st.dataframe(group_df.drop(columns=["Date"]), use_container_width=True, hide_index=True)
-    else:
-        st.info("No logs available yet.")
-
