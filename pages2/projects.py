@@ -6,7 +6,9 @@ def run():
     TEMPLATES = {
         "Software Project": ["Planning", "Design", "Development", "Testing", "Deployment"],
         "Research Project": ["Hypothesis", "Data Collection", "Analysis", "Publication"],
-        "Event Planning": ["Ideation", "Budgeting", "Vendor Selection", "Promotion", "Execution"]
+        "Event Planning": ["Ideation", "Budgeting", "Vendor Selection", "Promotion", "Execution"],
+        "Audits":["Initial Contact","Scope","Proposal","Accept Quote","Onboarding","Service","Invoice","Payment"]
+
     }
 
     TEAM_MEMBERS = ["Alice", "Bob", "Charlie", "Dana", "Eve", "Frank", "Grace", "Hannah"]

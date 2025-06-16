@@ -111,8 +111,6 @@ def show_profile(member):
             st.rerun()
 
 
-
-
 # 👥 Team View Page
 def show_team():
     st.title("👨‍💼 Team Leader Dashboard")

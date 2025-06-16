@@ -13,7 +13,7 @@ if "page" not in st.session_state:
     st.session_state["page"] = "signin"
 
 # Branch list
-branches = ["Chennai", "Bangalore", "Hyderabad", "Pune"]
+branches = ["Chennai", "Bangaluru", "Hyderabad", "Mumbai", "New Delhi"]
 
 # Utility functions
 def is_valid_email(email):
