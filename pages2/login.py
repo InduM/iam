@@ -11,8 +11,8 @@ def run():
         st.title("Login")
 
         with st.form("login_form", clear_on_submit=False):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
+            username = st.text_input("Username", label_visibility="collapsed")
+            password = st.text_input("Password", type="password", label_visibility="collapsed")
             login_btn = st.form_submit_button("Login")
 
         if login_btn:

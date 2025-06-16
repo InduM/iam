@@ -12,9 +12,6 @@ if "edit_mode" not in st.session_state:
 
 # Dynamic loader
 def load_page(module_name):
-    #f module_name == "projects":
-    #   module = importlib.import_module(f"projects.project_home")
-    #lse:
     module = importlib.import_module(f"pages2.{module_name}")
     module.run()
 
@@ -78,7 +75,7 @@ else:
                 menu_icon="cast",
                 default_index=0
             )
-        elif st.session_state["role"] == "admin":
+        if st.session_state["role"] == "admin":
             selected = option_menu(
                 "v-shesh",
                 ["Profile", "Documents", "Log","Logout"],
@@ -86,7 +83,7 @@ else:
                 menu_icon="cast",
                 default_index=0
             )
-        elif st.session_state["role"] == "manager":
+        if st.session_state["role"] == "manager":
             selected = option_menu(
                 "v-shesh",
                 ["Profile", "Documents","Log","Users","Projects","Logout"],

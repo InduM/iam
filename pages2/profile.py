@@ -95,7 +95,7 @@ def run():
                 st.write(f"**Role:** {user_profile.get('role', 'N/A')}")
                 st.write(f"**Date of Joining:** {user_profile.get('joiningDate', 'N/A')}")
                 st.write(f"**Branch:** {user_profile.get('branch', 'N/A')}")
-                st.write(f"**Current Projects:** {user_profile.get('projects', 'N/A')}")
+                st.write(f"**Current Projects:** {user_profile.get('project', 'N/A')}")
         else:
                 st.warning("No user found with that username.")
 

@@ -83,23 +83,23 @@ def run():
                 with row_cols[j]:
                     st.markdown("<div class='column-input'>", unsafe_allow_html=True)
                     if col == "Date":
-                        log[col] = st.date_input("", value=log[col], key=key)
+                        log[col] = st.date_input("", value=log[col], key=key, label_visibility="collapsed")
                     elif col == "Time":
-                        log[col] = st.time_input("", value=log[col], key=key)
+                        log[col] = st.time_input("", value=log[col], key=key, label_visibility="collapsed")
                     elif col == "Priority":
                         priority_options = ["Low", "Medium", "High"]
-                        log[col] = st.selectbox("", options=priority_options, key=key)
+                        log[col] = st.selectbox("", options=priority_options, key=key, label_visibility="collapsed")
                     elif col == "Category":
                         category_options = ["Audit-Physical","Audit-Digital","Audit-Design","Audit-Accessibility", "Audit-Policy", "Training-Onwards","Training-Regular","Sessions-Kiosk","Sessions-Sensitization","Sessions-Awareness","Recruitment","Other"]
-                        log[col] = st.selectbox("", options=category_options, key=key)
+                        log[col] = st.selectbox("", options=category_options, key=key, label_visibility="collapsed")
                         if log[col] == "Other":
-                            custom_mood = st.text_input("Specify Other")
+                            custom_mood = st.text_input("Specify Other", label_visibility="collapsed")
                             log[col] = custom_mood
 
                     elif col == "Client Name " or col == "Project Name":
-                        log[col] = st.text_input("",value = log[col],key = key)
+                        log[col] = st.text_input("",value = log[col],key = key, label_visibility="collapsed")
                     else:
-                        log[col] = st.text_area("", value=log[col], key=key)
+                        log[col] = st.text_area("", value=log[col], key=key, label_visibility="collapsed")
                     st.markdown("</div>", unsafe_allow_html=True)
             if row_cols[-1].button("🗑️", key=f"delete_{i}"):
                 delete_log_row(row_counter)
