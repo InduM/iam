@@ -4,7 +4,6 @@ from utils import check_login
 
 #def login():
 def run():
-    st.markdown('<div class="centered">', unsafe_allow_html=True)
 
     with st.container():
         st.markdown('<div class="login-box">', unsafe_allow_html=True)

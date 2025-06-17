@@ -1,52 +1,52 @@
 import streamlit as st
 from utils import is_logged_in
-from datetime import datetime,date,time
+from datetime import datetime, date, time
 from pymongo import MongoClient
 import certifi
 
 def run():
-    MONGO_URI = st.secrets["MONGO_URI"]  # Store securely in .streamlit/secrets.toml
+    # MongoDB setup
+    MONGO_URI = st.secrets["MONGO_URI"]
     client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
     db = client["user_db"]
-    logs_collection = db["logbook"]
+    logs_collection = db["logs"]
 
-     # ➕ Add/Delete Log Row for selected date
-    def add_log_row():
-        st.session_state.logs.append(create_default_log(selected_date))
-
+    # Authentication check
     if not is_logged_in():
         st.switch_page("option.py")
 
-    user_id = st.session_state.username
+    user_id = st.session_state.user["email"]
     st.title("📘 Everyday Log")
 
     log_columns = [
-        ("Date",200),("Time", 200),("Project Name",200),("Client Name",200),
-        ("Priority", 200),("Description", 200),("Category", 300),("Follow up", 300)
+        ("Date", 200), ("Time", 200), ("Project Name", 200), ("Client Name", 200),
+        ("Priority", 200), ("Description", 200), ("Category", 300), ("Follow up", 300)
     ]
 
     def create_default_log(selected_date=None):
         return {
-            "Date": selected_date or datetime.today().date(),
+            "user_id": user_id,
+            "Date": selected_date or date.today(),
             "Time": datetime.now().time().replace(second=0, microsecond=0),
-            "Project Name":"",
+            "Project Name": "",
             "Client Name": "",
             "Priority": "",
-            "Description":"",
-            "Category":"",
+            "Description": "",
+            "Category": "",
             "Follow up": ""
         }
 
+    def add_log_row():
+        st.session_state.logs.append(create_default_log(selected_date))
 
+    # UI: Date selector and Add button
     col1, col2 = st.columns([6, 1])
     with col1:
-        selected_date = st.date_input("",date.today(),label_visibility="collapsed")
+        selected_date = st.date_input("", date.today(), label_visibility="collapsed")
     with col2:
         st.button("➕ Log", on_click=add_log_row)
 
-    #if "logs" not in st.session_state:
-    #    st.session_state.logs = []
-    # ✅ FIXED: Use selected_date AFTER it's defined
+    # Load logs from MongoDB
     if "logs" not in st.session_state or st.session_state.get("last_loaded_date") != selected_date:
         st.session_state.logs = []
         start_dt = datetime.combine(selected_date, time.min)
@@ -55,30 +55,12 @@ def run():
         query = {"user_id": user_id, "Date": {"$gte": start_dt, "$lt": end_dt}}
         for log in logs_collection.find(query, {"_id": 0}):
             log["Date"] = log["Date"].date()
-            log["Time"] = datetime.strptime(log["Time"], "%H:%M").time()  # 🛠 convert string to time
             st.session_state.logs.append(log)
 
         if not st.session_state.logs:
             st.session_state.logs.append(create_default_log(selected_date))
 
         st.session_state.last_loaded_date = selected_date
-    # 📅 Date Filter
-    # Row: Date selector + Add Row button side by side
-    
-
-    filtered_logs = [log for log in st.session_state.logs if log["Date"] == selected_date]
-
-    # Add default row if none exist for selected date
-    if not filtered_logs:
-        new_log = create_default_log(selected_date)
-        st.session_state.logs.append(new_log)
-        filtered_logs = [new_log]
-    
-   
-    #def delete_log_row(index):
-    #    logs_on_selected_date = [i for i, log in enumerate(st.session_state.logs) if log["Date"] == selected_date]
-    #    if index < len(logs_on_selected_date):
-    #        del st.session_state.logs[logs_on_selected_date[index]]
 
     def delete_log_row(index):
         logs_on_date = [i for i, log in enumerate(st.session_state.logs) if log["Date"] == selected_date]
@@ -90,12 +72,11 @@ def run():
                     "$gte": datetime.combine(log_to_delete["Date"], time.min),
                     "$lt": datetime.combine(log_to_delete["Date"], time.max)
                 },
-                "Time": log_to_delete["Time"].strftime("%H:%M")  # 🛠 convert time to string
+                "Time": log_to_delete["Time"]
             })
             del st.session_state.logs[logs_on_date[index]]
 
-
-    # 🎯 Editable Log Table for Selected Date
+    # Editable table
     st.markdown("#### 📝 Logs for Selected Date")
     with st.container():
         st.markdown('<div class="scroll-container"><div class="block-container">', unsafe_allow_html=True)
@@ -109,7 +90,7 @@ def run():
         for i, log in enumerate(st.session_state.logs):
             if log["Date"] != selected_date:
                 continue
-            row_cols = st.columns([w for _, w in log_columns]+[50])
+            row_cols = st.columns([w for _, w in log_columns] + [50])
             for j, (col, _) in enumerate(log_columns):
                 key = f"{col}_{i}"
                 with row_cols[j]:
@@ -119,18 +100,20 @@ def run():
                     elif col == "Time":
                         log[col] = st.time_input("", value=log[col], key=key, label_visibility="collapsed")
                     elif col == "Priority":
-                        priority_options = ["Low", "Medium", "High"]
-                        log[col] = st.selectbox("", options=priority_options, key=key, label_visibility="collapsed")
+                        options = ["Low", "Medium", "High"]
+                        index = options.index(log[col]) if log[col] in options else 0
+                        log[col] = st.selectbox("", options, index=index, key=key, label_visibility="collapsed")
                     elif col == "Category":
-                        category_options = ["Audit-Physical","Audit-Digital","Audit-Design","Audit-Accessibility",
-                                            "Audit-Policy","Training-Onwards","Training-Regular","Sessions-Kiosk",
-                                            "Sessions-Sensitization","Sessions-Awareness","Recruitment","Other"]
-                        log[col] = st.selectbox("", options=category_options, key=key, label_visibility="collapsed")
+                        options = ["Audit-Physical", "Audit-Digital", "Audit-Design", "Audit-Accessibility",
+                                   "Audit-Policy", "Training-Onwards", "Training-Regular", "Sessions-Kiosk",
+                                   "Sessions-Sensitization", "Sessions-Awareness", "Recruitment", "Other"]
+                        index = options.index(log[col]) if log[col] in options else len(options) - 1
+                        log[col] = st.selectbox("", options, index=index, key=key, label_visibility="collapsed")
                         if log[col] == "Other":
-                            custom = st.text_input("Specify Other", label_visibility="collapsed")
+                            custom = st.text_input("Specify Other", label_visibility="collapsed", key=key + "_custom")
                             log[col] = custom
-                    elif col in ["Client Name","Project Name"]:
-                        log[col] = st.text_input("",value = log[col],key = key, label_visibility="collapsed")
+                    elif col in ["Client Name", "Project Name"]:
+                        log[col] = st.text_input("", value=log[col], key=key, label_visibility="collapsed")
                     else:
                         log[col] = st.text_area("", value=log[col], key=key, label_visibility="collapsed")
                     st.markdown("</div>", unsafe_allow_html=True)
@@ -138,11 +121,11 @@ def run():
                 delete_log_row(row_counter)
                 st.rerun()
             row_counter += 1
+
         st.markdown('</div></div>', unsafe_allow_html=True)
 
-    # 💾 Save Button
+    # Save button: overwrite logs in MongoDB
     if st.button("💾 Save Logs"):
-       #st.success("Logs saved for this session!")
         logs_collection.delete_many({
             "user_id": user_id,
             "Date": {
@@ -154,8 +137,5 @@ def run():
             if log["Date"] == selected_date:
                 mongo_log = log.copy()
                 mongo_log["Date"] = datetime.combine(log["Date"], time.min)
-                mongo_log["Time"] = log["Time"].strftime("%H:%M")  # 🛠 convert time to string
                 logs_collection.insert_one(mongo_log)
         st.success("Logs saved to MongoDB successfully!")
-
-

@@ -31,35 +31,13 @@ st.markdown("""
         padding: 1rem;
     }
 
-    .login-box {
-        background: #ffffff;
-        border-radius: 16px;
-        max-width: 350px;
-        width: 100%;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    }
-
-    .stTextInput > div > div > input,
-    .stTextInput input {
-        text-align: center;
-        font-size: 16px;
-    }
-
-    @media (max-width: 600px) {
-        .login-box {
-            padding: 1.5rem;
-        }
-    }
-
     .form-title {
         text-align: center;
         margin-bottom: 1.5rem;
         color: #333;
     }
 
-    .btn-login {
-        width: 100%;
-    }
+    
     </style>
 """, unsafe_allow_html=True)
 # Navigation
