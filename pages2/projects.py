@@ -1,14 +1,28 @@
 import streamlit as st
-from datetime import datetime, date
+from datetime import datetime, date , timedelta
 from typing import List
+import yagmail
+from email.message import EmailMessage
+
 def run():
+    # ───── Email Sender ─────
+    def send_invoice_email(to_email, project_name):
+        try:
+            yag = yagmail.SMTP(user=st.secrets["email"]["from"], password=st.secrets["email"]["password"])
+            subject = f"Invoice Stage Reminder – {project_name}"
+            body = f"Reminder: Project '{project_name}' has reached Invoice stage."
+            yag.send(to=to_email, subject=subject, contents=body)
+            return True
+        except Exception as e:
+            st.error(f"Failed to send email: {e}")
+            return False
+
+
     # ───── Templates ─────
     TEMPLATES = {
         "Software Project": ["Planning", "Design", "Development", "Testing", "Deployment"],
         "Research Project": ["Hypothesis", "Data Collection", "Analysis", "Publication"],
-        "Event Planning": ["Ideation", "Budgeting", "Vendor Selection", "Promotion", "Execution"],
-        "Audits":["Initial Contact","Scope","Proposal","Accept Quote","Onboarding","Service","Invoice","Payment"]
-
+        "Event Planning": ["Ideation", "Budgeting", "Vendor Selection", "Promotion", "Execution"]
     }
 
     TEAM_MEMBERS = ["Alice", "Bob", "Charlie", "Dana", "Eve", "Frank", "Grace", "Hannah"]
@@ -32,11 +46,10 @@ def run():
     # ───── Helpers ─────
     def format_level(i, levels: List[str]):
         try:
-            i = int(i) 
+            i = int(i)
             return f"Level {i+1} – {str(levels[i])}"
         except Exception:
             return f"Level {i+1}"
-
 
     def render_level_checkboxes(prefix, project_id, current_level, timestamps, levels, on_change_fn=None, editable=True):
         for i, label in enumerate(levels):
@@ -66,7 +79,7 @@ def run():
         st.title("📊 Projects Dashboard")
         st.button("➕ Create New Project", on_click=lambda: st.session_state.update(view="create"))
 
-        # Mobile-friendly filter row
+        # Responsive search + filters
         col1, col2, col3 = st.columns([3, 2, 2])
         with col1:
             search_query = st.text_input("Search", placeholder="Name, client, or team")
@@ -113,15 +126,35 @@ def run():
                 levels = p.get("levels", [])
                 current_level = p.get("level", -1)
                 st.markdown(f"**Current Level:** {format_level(current_level, levels)}")
-                render_level_checkboxes("view", pid, int(p["level"]), p.get("timestamps", {}), levels, editable=False)
+                render_level_checkboxes("view", pid, int(p.get("level", -1)), p.get("timestamps", {}), levels, editable=False)
+                # --- Email Reminder ---
+                project_name = p.get("name", "Unnamed")
+                ## HArdcoding the lead email for now
+                #lead_email = st.secrets["project_leads"].get(project_name)
+                lead_email = st.secrets["project_leads"].get("Project Alpha")
+                invoice_index = p["levels"].index("Invoice") if "Invoice" in p["levels"] else -1
+                payment_index = p["levels"].index("Payment") if "Payment" in p["levels"] else -1
 
+                email_key = f"last_email_sent_{pid}"
+                if email_key not in st.session_state:
+                    st.session_state[email_key] = None
+
+                if (0 <= invoice_index <= current_level) and (payment_index > current_level) and lead_email:
+                    now = datetime.now()
+                    last_sent = st.session_state[email_key]
+                # Send immediately on first Invoice check
+                    if not last_sent:
+                        if send_invoice_email(lead_email, project_name):
+                            st.session_state[email_key] = now
+                    if not last_sent or now - last_sent >= timedelta(minutes=1):
+                        if send_invoice_email(lead_email, project_name):
+                            st.session_state[email_key] = now
+            #----------------------------------------------------- 
                 col1, col2 = st.columns(2)
-                if st.session_state.get(f"edit_clicked_{pid}") != True:
-                    if col1.button("✏ Edit", key=f"edit_{pid}"):
-                        st.session_state[f"edit_clicked_{pid}"] = True
-                        st.session_state.edit_project_id = pid
-                        st.session_state.view = "edit"
-                        st.rerun()
+                if col1.button("✏ Edit", key=f"edit_{pid}"):
+                    st.session_state.edit_project_id = pid
+                    st.session_state.view = "edit"
+                    st.rerun()
 
                 confirm_key = f"confirm_delete_{pid}"
                 if not st.session_state.confirm_delete.get(confirm_key):
@@ -152,23 +185,42 @@ def run():
 
         if st.session_state.selected_template:
             st.markdown(f"Using template: **{st.session_state.selected_template}**")
-            st.session_state.custom_levels = TEMPLATES[st.session_state.selected_template].copy()
+            levels_from_template = TEMPLATES[st.session_state.selected_template].copy()
+    # Remove "Invoice" and "Payment" if present in the template
+            for required in ["Invoice", "Payment"]:
+                if required in levels_from_template:
+                    levels_from_template.remove(required)
+            # Enforce them at the end
+            st.session_state.custom_levels = levels_from_template + ["Invoice", "Payment"]
+
         else:
             st.subheader("Customize Progress Levels")
             if not st.session_state.custom_levels:
                 st.session_state.custom_levels = ["Initial"]
-            for i in range(len(st.session_state.custom_levels)):
+
+            # ✅ Enforce Invoice & Payment as final levels
+            for required in ["Invoice", "Payment"]:
+                if required in st.session_state.custom_levels:
+                    st.session_state.custom_levels.remove(required)
+
+            # UI to edit levels before final two
+            editable_levels = st.session_state.custom_levels.copy()
+            for i in range(len(editable_levels)):
                 cols = st.columns([5, 1])
-                st.session_state.custom_levels[i] = cols[0].text_input(
-                    f"Level {i+1}", value=st.session_state.custom_levels[i], key=f"level_{i}"
-                )
-                if len(st.session_state.custom_levels) > 1:
-                    if cols[1].button("➖", key=f"remove_{i}"):
-                        st.session_state.custom_levels.pop(i)
-                        st.rerun()
+                editable_levels[i] = cols[0].text_input(f"Level {i+1}", value=editable_levels[i], key=f"level_{i}")
+                if len(editable_levels) > 1 and cols[1].button("➖", key=f"remove_{i}"):
+                    editable_levels.pop(i)
+                    st.session_state.custom_levels = editable_levels
+                    st.rerun()
+
+            st.session_state.custom_levels = editable_levels
+
             if st.button("➕ Add Level"):
                 st.session_state.custom_levels.append(f"New Level {len(st.session_state.custom_levels) + 1}")
                 st.rerun()
+
+            # Ensure final two
+            st.session_state.custom_levels += ["Invoice", "Payment"]
 
         st.subheader("Progress")
         level_index = st.session_state.get("level_index", -1)
