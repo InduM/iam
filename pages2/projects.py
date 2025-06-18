@@ -163,7 +163,6 @@ def run():
 
     # ───── Pages ─────
     def show_dashboard():
-        st.title("📊 Projects Dashboard")
         st.query_params["_"]=str(int(time.time() // 60)) #Trigger rerun every 60 seconds
 
         col1, col2 = st.columns([1, 1])

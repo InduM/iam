@@ -26,8 +26,13 @@ def run():
     def load_team_data():
         data = list(collection.find({}, {"_id": 0}))
         for d in data:
-            if not isinstance(d.get("project"), list):
-                d["project"] = [d["project"]] if d.get("project") else []
+            proj = d.get("project")
+            if isinstance(proj, list):
+                continue
+            elif isinstance(proj, str):
+                d["project"] = [proj]
+            else:
+                d["project"] = []
         return data
 
     # 📝 Update team member details

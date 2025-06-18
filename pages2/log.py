@@ -48,10 +48,12 @@ def run():
     if "refresh_triggered" not in st.session_state:
         st.session_state.refresh_triggered = False
 
+    # Set default using a temporary variable, not directly in session state
+    default_date = date.today()
     # ✅ Datepicker & Buttons
-    col1, col2, col3 = st.columns([5, 1, 1])
+    col1, col2, col3 = st.columns([5, 1, 2])
     with col1:
-        selected_date = st.date_input("", st.session_state.selected_date, key="selected_date", label_visibility="collapsed")
+        selected_date = st.date_input("", value=st.session_state.get("selected_date", default_date), key="selected_date", label_visibility="collapsed")
     with col2:
         st.button("➕ Log", on_click=lambda: st.session_state.logs.append(create_default_log()))
     with col3:
