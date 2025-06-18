@@ -27,16 +27,12 @@ def run():
         st.switch_page("option.py")
 
     username = st.session_state["username"]
+    
     st.title("📘 Everyday Log")
 
     log_columns = [
-        ("Time", 200),
-        ("Project Name", 200),
-        ("Client Name", 200),
-        ("Priority", 200),
-        ("Description", 200),
-        ("Category", 300),
-        ("Follow up", 300)
+        ("Time", 200),("Project Name", 200),("Client Name", 200),("Priority", 200),
+        ("Description", 200),("Category", 300),("Follow up", 300)
     ]
 
     # ✅ Session state setup

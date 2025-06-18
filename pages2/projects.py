@@ -168,11 +168,11 @@ def run():
 
         col1, col2 = st.columns([1, 1])
         with col1:
-            if st.button("➕ Create New Project"):
+            if st.button("➕ New Project"):
                 st.session_state.view = "create"
                 st.rerun()
         with col2:
-            if st.button("🔄 Refresh from Database"):
+            if st.button("🔄Refresh"):
                 st.session_state.refresh_projects = True
                 st.rerun()
 
