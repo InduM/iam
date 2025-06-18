@@ -2,7 +2,7 @@ import streamlit as st
 from utils import is_logged_in
 import pymongo
 import base64
-
+import os
 
 def run():
     
@@ -83,14 +83,19 @@ def run():
                         st.image(image_data, use_container_width=False, width=200)
                     else:
                         # Default image if none uploaded
-                        st.image("images/img_avatar.png", use_container_width=False, width=200)
+                        #image_path = os.path.join(os.path.dirname(__file__), "images", "img_avatar.png")
+                        #print("IMAGE PATH!!!!", image_path)
+                        user_doc = collection2.find_one({"username": "admin"}) # change it to default user later
+                        profile_image_data = user_doc.get("profile_image", {}).get("data", None)
+                        image_data = base64.b64decode(profile_image_data)
+                        st.image(image_data, use_container_width=False, width=200)
 
                 st.write(f"**Name:** {user_profile.get('name', 'N/A')}")
                 st.write(f"**Email:** {user_profile.get('email', 'N/A')}")
                 st.write(f"**Role:** {user_profile.get('role', 'N/A')}")
                 st.write(f"**Date of Joining:** {user_profile.get('joiningDate', 'N/A')}")
                 st.write(f"**Branch:** {user_profile.get('branch', 'N/A')}")
-                st.write(f"**Current Projects:** {user_profile.get('projects', 'N/A')}")
+                st.write(f"**Current Projects:** {user_profile.get('project', 'N/A')}")
         else:
                 st.warning("No user found with that username.")
 
