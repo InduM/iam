@@ -121,25 +121,28 @@ def run():
                 st.rerun()
 
             # 🔍 Show Everyday Log if current user is a manager
+                # 🔍 Show Everyday Log if current user is a manager
             if st.session_state.get("role") == "manager":
-                st.markdown("### 📘 Everyday Log")
                 logs_collection = get_logs_collection()
 
-                today_str = date.today().strftime("%Y-%m-%d")
-                query = {"Date": today_str, "Username": member["email"].split("@")[0]}  # match the username used in logs
-                logs = list(logs_collection.find(query, {"_id": 0, "Date": 0, "Username": 0}))
+                # ✅ Date selector
+                selected_log_date = st.date_input("📅 Select a date to view logs", value=date.today(), key="log_view_date")
+
+                # ✅ Query logs for selected member on that date
+                query_date_str = selected_log_date.strftime("%Y-%m-%d")
+                query_username = member["email"].split("@")[0]
+                logs = list(logs_collection.find(
+                    {"Date": query_date_str, "Username": query_username},
+                    {"_id": 0, "Date": 0, "Username": 0}
+                ))
 
                 if logs:
-                    for log in logs:
-                        with st.expander(f"🕒 {log.get('Time', 'Unknown Time')}"):
-                            st.markdown(f"**Project Name:** {log.get('Project Name', '')}")
-                            st.markdown(f"**Client Name:** {log.get('Client Name', '')}")
-                            st.markdown(f"**Priority:** {log.get('Priority', '')}")
-                            st.markdown(f"**Description:** {log.get('Description', '')}")
-                            st.markdown(f"**Category:** {log.get('Category', '')}")
-                            st.markdown(f"**Follow up:** {log.get('Follow up', '')}")
+                    import pandas as pd
+                    df_logs = pd.DataFrame(logs)
+                    st.dataframe(df_logs, use_container_width=True, hide_index=True)
                 else:
-                    st.info("No logs found for today.")
+                    st.info("No logs found for this date.")
+
 
     # 👥 Team View Page
     def show_team():
