@@ -35,38 +35,39 @@ st.markdown("""
         text-align: center;
         margin-bottom: 1.5rem;
         color: #333;
-    }
-
-    
+    } 
     </style>
 """, unsafe_allow_html=True)
+
 # Navigation
 if not st.session_state.authenticated:
     load_page("login")
 else:
+    st.sidebar.image(
+        "images\logo.png",
+        use_container_width=True,
+    )
     with st.sidebar:
         if st.session_state["role"] == "user":
             selected = option_menu(
-                "v-shesh",
+                None,
                 ["Profile", "Documents", "Log","Logout"],
                 icons=["person", "file-earmark-richtext", "file-spreadsheet","box-arrow-right"],
-                menu_icon="cast",
+               
                 default_index=0
             )
         if st.session_state["role"] == "admin":
             selected = option_menu(
-                "v-shesh",
-                ["Profile", "Documents", "Log","Logout"],
-                icons=["person", "file-earmark-richtext", "file-spreadsheet","box-arrow-right"],
-                menu_icon="cast",
+                None,
+                ["Profile", "Documents","Log","Users","Projects","Logout"],
+                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","box-arrow-right"],
                 default_index=0
             )
         if st.session_state["role"] == "manager":
             selected = option_menu(
-                "v-shesh",
+                None,
                 ["Profile", "Documents","Log","Users","Projects","Logout"],
                 icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","box-arrow-right"],
-                menu_icon="cast",
                 default_index=0
             )
 

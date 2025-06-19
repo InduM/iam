@@ -13,7 +13,7 @@ def run():
         return MongoClient(st.secrets["MONGO_URI"])
 
     client = init_connection()
-    db = client["project_dashboard"]
+    db = client["user_db"]
     projects_collection = db["projects"]
 
     # ───── Database Operations ─────
@@ -108,7 +108,18 @@ def run():
         "Event Planning": ["Ideation", "Budgeting", "Vendor Selection", "Promotion", "Execution"]
     }
 
-    TEAM_MEMBERS = ["Alice", "Bob", "Charlie", "Dana", "Eve", "Frank", "Grace", "Hannah"]
+    users_collection = db["users"]
+
+    @st.cache_data
+    def get_team_members():
+        role = st.session_state.get("role", "")
+        if role == "manager":
+            return [u["name"] for u in users_collection.find({"role": "user"})]
+        else:
+            return [u["name"] for u in users_collection.find()]
+
+    TEAM_MEMBERS = get_team_members()
+
 
     # ───── Session State ─────
     for key, default in {

@@ -151,8 +151,11 @@ def run():
 
     # 👥 Team View Page
     def show_team():
-
+        
         team_data = load_team_data()
+        current_role = st.session_state.get("role")
+        if current_role == "manager":
+            team_data = [member for member in team_data if member.get("role") == "user"]
         df = pd.DataFrame(team_data)
 
         # --- Filters ---
