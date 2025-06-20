@@ -43,10 +43,10 @@ st.markdown("""
 if not st.session_state.authenticated:
     load_page("login")
 else:
-    st.sidebar.image(
-        "images\logo.png",
-        use_container_width=True,
-    )
+    #st.sidebar.image(
+   #     "images\logo.png",
+   #     use_container_width=True,
+   # )
     with st.sidebar:
         if st.session_state["role"] == "user":
             selected = option_menu(
