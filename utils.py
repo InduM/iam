@@ -12,6 +12,7 @@ def check_login(username, password):
     user = users_col.find_one({"username": username})
     if user and user["password"] == password:
             st.session_state["role"] = user["role"]
+            st.session_state["username"] = user["username"]
             return True
     else:
             return False

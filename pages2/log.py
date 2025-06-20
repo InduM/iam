@@ -156,7 +156,7 @@ def run():
         st.markdown('</div></div>', unsafe_allow_html=True)
 
     # ✅ Save logs
-    if st.button("💾 Save Logs"):
+    if st.button("💾 Save"):
         logs_collection.delete_many({"Date": selected_date_str, "Username": username})
         for log in st.session_state.logs:
             log_with_meta = {"Date": selected_date_str, "Username": username, **log}

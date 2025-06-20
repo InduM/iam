@@ -3,22 +3,20 @@ import pandas as pd
 from datetime import date
 from pymongo import MongoClient
 import certifi
-
+import base64
 
 def run():
         # 🔌 Connect to MongoDB Atlas
+    uri = st.secrets["MONGO_URI"]
+    client = MongoClient(uri, tlsCAFile=certifi.where())
+    db = client["user_db"]
+
     @st.cache_resource
     def get_mongo_collection():
-        uri = st.secrets["MONGO_URI"]
-        client = MongoClient(uri, tlsCAFile=certifi.where())
-        db = client["user_db"]
         return db["users"]
 
     @st.cache_resource
     def get_logs_collection():
-        uri = st.secrets["MONGO_URI"]
-        client = MongoClient(uri, tlsCAFile=certifi.where())
-        db = client["user_db"]
         return db["logs"]
     collection = get_mongo_collection()
 
@@ -76,6 +74,32 @@ def run():
         st.success("✅ Profile updated successfully!")
         st.session_state.edit_mode = False
 
+
+    def display_profile(username, w):
+        collection2 = db["documents"]
+        user_doc = collection2.find_one({"username": username})
+        profile_image_data = user_doc.get("profile_image", {}).get("data", None)
+        if  profile_image_data:# Decode base64 and display image
+            st.markdown(
+                f"""
+                <img src="data:image/png;base64,{profile_image_data}" 
+                    style="width:100px; height:100px; object-fit:cover; border-radius:10%;">
+                """,
+                unsafe_allow_html=True,
+            )
+        else:           # Default image if none uploaded
+            user_doc = collection2.find_one({"username": "admin"}) # change it to default user later
+            profile_image_data = user_doc.get("profile_image", {}).get("data", None)
+            st.markdown(
+            f"""
+            <img src="data:image/png;base64,{profile_image_data}" 
+                style="width:100px; height:100px; object-fit:cover; border-radius:10%;">
+            """,
+            unsafe_allow_html=True,
+             )
+
+
+
     # 📋 Profile Page
     def show_profile(member):
         col1, col2 = st.columns([1, 8])  # Narrow left column for back arrow
@@ -86,7 +110,7 @@ def run():
         with col2:
             st.title(member["name"])
 
-        st.image(default_img_path, width=150)
+        display_profile(member["username"], w=100)
 
         if st.session_state.edit_mode:
             with st.form("edit_form"):
@@ -103,9 +127,9 @@ def run():
                 })
 
                 projects = st.multiselect(
-                    "Projects (Editable)",
+                    "Projects",
                     options=all_projects,
-                    default=member.get("project", []),
+                    default=[p for p in member.get("project", []) if p in all_projects],
                 )
 
                 submitted = st.form_submit_button("💾 Save Projects")
@@ -117,11 +141,11 @@ def run():
                     st.rerun()
         else:
             st.markdown(f"**Email:** {member['email']}")
-            st.markdown(f"**Role:** {member['role']}")
+            st.markdown(f"**Role:** {member['position']}")
             st.markdown(f"**Branch:** {member['branch']}")
             st.markdown("**Projects:** " + ", ".join(member.get("project", [])))
 
-            if st.button("✏️ Edit Projects"):
+            if st.button("✏️ Edit Profile"):
                 st.session_state.edit_mode = True
                 st.rerun()
 
@@ -188,9 +212,7 @@ def run():
         if search_query:
             filtered = filtered[filtered["name"].str.contains(search_query, case=False)]
 
-        # --- Display Team Members ---
-            # --- Display Team Members (left-to-right layout) ---
-        st.subheader("👥 Team Members")
+        # --- Display Team Members (left-to-right layout) ---
         num_columns = 2  # Adjust for more per row if needed
         rows = [filtered.iloc[i:i+num_columns] for i in range(0, len(filtered), num_columns)]
 
@@ -198,8 +220,10 @@ def run():
             cols = st.columns(num_columns)
             for idx, (_, member) in enumerate(row_chunk.iterrows()):
                 with cols[idx]:
-                    st.image(default_img_path, width=100)
-                    if st.button(member["name"], key=member["email"]):
+                    display_profile(member["username"], w=100)
+                    name = str(member.get("name", "Unnamed"))
+                    email = str(member.get("email", f"key_{name}"))
+                    if st.button(name, key=email):
                         st.session_state.selected_member = member.to_dict()
                         st.rerun()
 

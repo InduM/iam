@@ -5,6 +5,7 @@ from typing import List
 import yagmail
 from pymongo import MongoClient
 from bson.objectid import ObjectId
+from PIL import Image
 
 def run():
     # ───── MongoDB Connection ─────
@@ -18,15 +19,23 @@ def run():
 
     # ───── Database Operations ─────
     def load_projects_from_db():
-        """Load all projects from MongoDB"""
         try:
-            projects = list(projects_collection.find())
+            role = st.session_state.get("role", "")
+            username = st.session_state.get("username", "")
+            
+            if role == "manager":
+                query = {"created_by": username}
+            else:
+                query = {}  # Admins or others can see all
+            
+            projects = list(projects_collection.find(query))
             for project in projects:
-                project["id"] = str(project["_id"])  # Convert ObjectId to string for UI
+                project["id"] = str(project["_id"])  # Convert ObjectId for Streamlit
             return projects
         except Exception as e:
             st.error(f"Error loading projects: {e}")
             return []
+
 
     def save_project_to_db(project_data):
         """Save a new project to MongoDB"""
@@ -105,7 +114,8 @@ def run():
     TEMPLATES = {
         "Software Project": ["Planning", "Design", "Development", "Testing", "Deployment"],
         "Research Project": ["Hypothesis", "Data Collection", "Analysis", "Publication"],
-        "Event Planning": ["Ideation", "Budgeting", "Vendor Selection", "Promotion", "Execution"]
+        "Event Planning": ["Ideation", "Budgeting", "Vendor Selection", "Promotion", "Execution"],
+        "v-shesh":["Initial Contact","Scope","Proposal","Accept Quote","Onboarding","Service"]
     }
 
     users_collection = db["users"]
@@ -224,7 +234,7 @@ def run():
 
         for i, p in enumerate(filtered_projects):
             pid = p.get("id", f"auto_{i}")
-            with st.expander(f"{p.get('name', 'Unnamed')} – Template: {p.get('template', 'N/A')}"):
+            with st.expander(f"{p.get('name', 'Unnamed')}"):
                 st.markdown(f"**Client:** {p.get('client', '-')}")
                 st.markdown(f"**Description:** {p.get('description', '-')}")
                 st.markdown(f"**Start Date:** {p.get('startDate', '-')}")
@@ -296,9 +306,55 @@ def run():
                     if col_no.button("❌ No", key=f"no_{pid}"):
                         st.session_state.confirm_delete[confirm_key] = False
                         st.rerun()
+    
+    users_collection = db["users"]  # 👈 Ensure this is defined near the top
+    def update_users_with_project(team_list, project_name):
+        for user in team_list:
+            # Step 1: Ensure the project field is a list if it exists as a string
+            user_doc = users_collection.find_one({"name": user})
+            if user_doc:
+                if "project" in user_doc and isinstance(user_doc["project"], str):
+                    users_collection.update_one(
+                        {"name": user},
+                        {"$set": {"project": [user_doc["project"]]}}
+                    )
+                elif "project" not in user_doc:
+                    users_collection.update_one(
+                        {"name": user},
+                        {"$set": {"project": []}}
+                    )
+
+            # Step 2: Add new project without duplicates
+            users_collection.update_one(
+                {"name": user},
+                {"$addToSet": {"project": project_name}}
+            )
+
 
     def show_create_form():
         st.title("🛠 Create Project")
+                # Back Arrow Icon (←)
+        st.markdown(
+            """
+            <style>
+            .back-button {
+                font-size: 24px;
+                margin-bottom: 1rem;
+                display: inline-block;
+                cursor: pointer;
+                color: #007BFF;
+            }
+            .back-button:hover {
+                text-decoration: underline;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
+        if st.button("← Back", key="back_button"):
+            st.session_state.view = "dashboard"  # or "login", or any other previous state
+            st.rerun()
         template_options = ["Custom Template"] + list(TEMPLATES.keys())
         selected = st.selectbox("Select Template (optional)", template_options)
 
@@ -374,7 +430,8 @@ def run():
                     "level": st.session_state.level_index,
                     "timestamps": st.session_state.level_timestamps.copy(),
                     "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat()
+                    "updated_at": datetime.now().isoformat(),
+                    "created_by": st.session_state.get("username", "unknown"),
                 }
                 
                 project_id = save_project_to_db(new_proj)
@@ -388,10 +445,17 @@ def run():
                     st.session_state.custom_levels = []
                     st.session_state.selected_template = ""
                     st.session_state.view = "dashboard"
+                    update_users_with_project(team, name)
                     st.rerun()
+        update_users_with_project(team, name)
 
     def show_edit_form():
         st.title("✏ Edit Project")
+
+        if st.button("← Back", key="back_button"):
+            st.session_state.view = "dashboard"  # or "login", or any other previous state
+            st.rerun()
+
         pid = st.session_state.edit_project_id
         project = next((p for p in st.session_state.projects if p["id"] == pid), None)
 
@@ -422,7 +486,7 @@ def run():
             
         render_level_checkboxes("edit", pid, int(project["level"]), project.get("timestamps", {}), project["levels"], on_change_edit)
 
-        if st.button("💾 Save Changes"):
+        if st.button("💾 Save"):
             if due <= start:
                 st.error("Cannot save: Due date must be later than the start date.")
             elif not name or not client:
@@ -435,14 +499,18 @@ def run():
                     "startDate": start.isoformat(),
                     "dueDate": due.isoformat(),
                     "team": team,
-                    "updated_at": datetime.now().isoformat()
+                    "updated_at": datetime.now().isoformat(),
+                    "created_by": st.session_state.get("username", "unknown"),
+                    "created_at": project.get("created_at", datetime.now().isoformat())
                 }
                 
                 if update_project_in_db(pid, updated_project):
                     project.update(updated_project)
                     st.success("Changes saved to database!")
                     st.session_state.view = "dashboard"
+                    update_users_with_project(team, name)
                     st.rerun()
+        update_users_with_project(team, name)
 
     # ───── Navigation ─────
     if st.session_state.view == "dashboard":
