@@ -44,7 +44,7 @@ if not st.session_state.authenticated:
     load_page("login")
 else:
     st.sidebar.image(
-        "images\logo.png",
+        "https://i0.wp.com/v-shesh.com/wp-content/uploads/2020/09/v-shesh.png?fit=188%2C70&ssl=1",
         use_container_width=True,
     )
     with st.sidebar:

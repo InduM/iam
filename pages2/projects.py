@@ -449,6 +449,15 @@ def run():
                     st.rerun()
         update_users_with_project(team, name)
 
+    def remove_project_from_users(old_team, new_team, project_name):
+        removed_users = set(old_team) - set(new_team)
+        for user in removed_users:
+            users_collection.update_one(
+                {"name": user},
+                {"$pull": {"project": project_name}}
+            )
+
+
     def show_edit_form():
         st.title("✏ Edit Project")
 
@@ -463,6 +472,7 @@ def run():
             st.error("Project not found.")
             return
 
+        original_team = project.get("team", [])
         name = st.text_input("Project Name", value=project["name"])
         client = st.text_input("Client Name", value=project["client"])
         description = st.text_area("Project Description", value=project["description"])
@@ -509,6 +519,7 @@ def run():
                     st.success("Changes saved to database!")
                     st.session_state.view = "dashboard"
                     update_users_with_project(team, name)
+                    remove_project_from_users(original_team, team, name)  # remove project from users who were unassigned
                     st.rerun()
         update_users_with_project(team, name)
 
