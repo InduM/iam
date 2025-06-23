@@ -101,6 +101,7 @@ def run():
             newvalues = {"$set":profile_data}
             collection.update_one(myquery,newvalues)
             st.success("✅ Documents uploaded successfully!")
+            st.rerun()
         else:
             st.warning("Please upload at least one document.")
 

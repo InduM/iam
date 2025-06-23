@@ -16,6 +16,11 @@ def run():
     client = init_connection()
     db = client["user_db"]
     projects_collection = db["projects"]
+    clients_collection = db["clients"]
+
+    def get_all_clients():
+        return [c["name"] for c in clients_collection.find({}, {"name": 1}) if "name" in c]
+
 
     # ───── Database Operations ─────
     def load_projects_from_db():
@@ -184,6 +189,12 @@ def run():
 
     # ───── Pages ─────
     def show_dashboard():
+
+        def remove_project_from_all_users(project_name):
+            users_collection.update_many(
+            {"project": project_name},
+            {"$pull": {"project": project_name}}
+            )
         st.query_params["_"]=str(int(time.time() // 60)) #Trigger rerun every 60 seconds
 
         col1, col2 = st.columns([1, 1])
@@ -301,12 +312,14 @@ def run():
                     if col_yes.button("✅ Yes", key=f"yes_{pid}"):
                         if delete_project_from_db(pid):
                             st.session_state.projects = [proj for proj in st.session_state.projects if proj["id"] != pid]
+                            remove_project_from_all_users(p.get("name", "Unnamed"))  # 🔁 Remove project from all user profiles
                             st.success("Project deleted from database.")
                         st.session_state.confirm_delete[confirm_key] = False
                         st.rerun()
                     if col_no.button("❌ No", key=f"no_{pid}"):
                         st.session_state.confirm_delete[confirm_key] = False
                         st.rerun()
+    
     
     users_collection = db["users"]  # 👈 Ensure this is defined near the top
     def update_users_with_project(team_list, project_name):
@@ -365,7 +378,10 @@ def run():
             st.session_state.selected_template = ""
 
         name = st.text_input("Project Name")
-        client = st.text_input("Client Name")
+        CLIENTS = get_all_clients()
+        if not CLIENTS:
+            st.warning("⚠ No clients found in the database.")
+        client = st.selectbox("Client", options=CLIENTS)
         description = st.text_area("Project Description")
         start = st.date_input("Start Date")
         due = st.date_input("Due Date")
@@ -480,7 +496,12 @@ def run():
 
         original_team = project.get("team", [])
         name = st.text_input("Project Name", value=project["name"])
-        client = st.text_input("Client Name", value=project["client"])
+        CLIENTS = get_all_clients()
+        if not CLIENTS:
+            st.warning("⚠ No clients found in the database.")
+        client = st.selectbox("Client",
+                               options=CLIENTS, 
+                               index=CLIENTS.index(project["client"]) if project["client"] in CLIENTS else 0)
         description = st.text_area("Project Description", value=project["description"])
         start = st.date_input("Start Date", value=date.fromisoformat(project["startDate"]))
         due = st.date_input("Due Date", value=date.fromisoformat(project["dueDate"]))

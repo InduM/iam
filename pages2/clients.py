@@ -143,7 +143,10 @@ def run():
                     "created_by": st.session_state.get("username", "unknown"),
                     "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
-                if save_client(client_data):
+                existing = clients_collection.find_one({"name": name})
+                if existing:
+                    st.error("A client with this name already exists.")
+                elif save_client(client_data):
                     st.success("Client created!")
                     st.session_state.client_view = "dashboard"
                     st.rerun()
@@ -174,7 +177,10 @@ def run():
                     "company": company,
                     "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
-                if update_client(cid, updated):
+                existing = clients_collection.find_one({"name": name, "_id": {"$ne": ObjectId(cid)}})
+                if existing:
+                    st.error("A client with this name already exists.")
+                elif update_client(cid, updated):
                     st.success("Client updated.")
                     st.session_state.client_view = "dashboard"
                     st.rerun()
