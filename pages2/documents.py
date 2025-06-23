@@ -17,7 +17,6 @@ def run():
     db = client["user_db"]
     collection = db["documents"]
 
-    st.title("Documents Upload")
     username = st.session_state["username"]
     role = st.session_state.get("role", "user")  # Default to 'user' if not set
 

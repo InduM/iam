@@ -1,11 +1,11 @@
 import streamlit as st
 from utils import is_logged_in
-from datetime import datetime, date, time , timedelta
+from datetime import datetime, date, time, timedelta
 from pymongo import MongoClient
 import certifi
 
-def run():
 
+def run():
     # ✅ MongoDB connection
     MONGO_URI = st.secrets["MONGO_URI"]
     client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
@@ -23,48 +23,39 @@ def run():
             "Follow up": ""
         }
 
-    # ✅ Check login
+    # ✅ Login check
     if not is_logged_in():
         st.switch_page("option.py")
 
     username = st.session_state["username"]
-    
     log_columns = [
-        ("Time", 200),("Project Name", 200),("Client Name", 200),("Priority", 200),
-        ("Description", 200),("Category", 300),("Follow up", 300)
+        ("Time", 200), ("Project Name", 200), ("Client Name", 200), ("Priority", 200),
+        ("Description", 200), ("Category", 300), ("Follow up", 300)
     ]
 
     # ✅ Session state setup
-    #if "selected_date" not in st.session_state:
-    #    st.session_state.selected_date = date.today()
-
     if "last_selected_date" not in st.session_state:
         st.session_state.last_selected_date = None
-
     if "logs" not in st.session_state:
         st.session_state.logs = []
-
     if "refresh_triggered" not in st.session_state:
         st.session_state.refresh_triggered = False
 
-    # Set default using a temporary variable, not directly in session state
-    default_date = date.today()
-    
+    # ✅ Datepicker & control buttons
+    today = date.today()
+    default_date = today
+    start_of_week = today - timedelta(days=today.weekday())
+    start_of_prev_week = start_of_week - timedelta(days=7)
+    end_of_week = start_of_week + timedelta(days=6)
 
-
-    # ✅ Datepicker & Buttons
     col1, col2, col3 = st.columns([5, 1, 2])
     with col1:
-        #selected_date = st.date_input("", value=st.session_state.get("selected_date", default_date), key="selected_date", label_visibility="collapsed")
         selected_date = st.date_input("", value=default_date, key="selected_date", label_visibility="collapsed")
-        # Get today and week start boundaries
-        today = date.today()
-        start_of_week = today - timedelta(days=today.weekday())  # Monday this week
-        start_of_prev_week = start_of_week - timedelta(days=7)
-        end_of_week = start_of_week + timedelta(days=6)
         can_add_log = start_of_prev_week <= selected_date <= end_of_week
+
     with col2:
-        st.button("➕ Log", on_click=lambda: st.session_state.logs.append(create_default_log()),disabled=not can_add_log)
+        st.button("➕ Log", on_click=lambda: st.session_state.logs.append(create_default_log()), disabled=not can_add_log)
+
     with col3:
         def refresh_logs():
             with st.spinner("Refreshing logs..."):
@@ -81,7 +72,7 @@ def run():
 
     selected_date_str = st.session_state.selected_date.strftime("%Y-%m-%d")
 
-    # ✅ Fetch logs on first load or when date changes
+    # ✅ Fetch logs on date change
     if st.session_state.last_selected_date != st.session_state.selected_date:
         st.session_state.logs = []
         query = {"Date": selected_date_str, "Username": username}
@@ -117,14 +108,7 @@ def run():
                     st.markdown("<div class='column-input'>", unsafe_allow_html=True)
 
                     if col == "Time":
-                        if isinstance(log[col], str):
-                            log_time = datetime.strptime(log[col], "%H:%M").time()
-                        elif isinstance(log[col], datetime):
-                            log_time = log[col].time()
-                        elif isinstance(log[col], time):
-                            log_time = log[col]
-                        else:
-                            log_time = datetime.now().time().replace(second=0, microsecond=0)
+                        log_time = datetime.strptime(log[col], "%H:%M").time() if isinstance(log[col], str) else log.get(col, datetime.now().time())
                         new_time = st.time_input("", value=log_time, key=key, label_visibility="collapsed")
                         log[col] = new_time.strftime("%H:%M")
 
@@ -133,9 +117,11 @@ def run():
                         log[col] = st.selectbox("", options=options, key=key, label_visibility="collapsed")
 
                     elif col == "Category":
-                        options = ["Audit-Physical", "Audit-Digital", "Audit-Design", "Audit-Accessibility",
-                                   "Audit-Policy", "Training-Onwards", "Training-Regular", "Sessions-Kiosk",
-                                   "Sessions-Sensitization", "Sessions-Awareness", "Recruitment", "Other"]
+                        options = [
+                            "Audit-Physical", "Audit-Digital", "Audit-Design", "Audit-Accessibility",
+                            "Audit-Policy", "Training-Onwards", "Training-Regular", "Sessions-Kiosk",
+                            "Sessions-Sensitization", "Sessions-Awareness", "Recruitment", "Other"
+                        ]
                         log[col] = st.selectbox("", options=options, key=key, label_visibility="collapsed")
                         if log[col] == "Other":
                             custom = st.text_input("Specify Other", label_visibility="collapsed", key=key + "_custom")
@@ -159,6 +145,5 @@ def run():
     if st.button("💾 Save"):
         logs_collection.delete_many({"Date": selected_date_str, "Username": username})
         for log in st.session_state.logs:
-            log_with_meta = {"Date": selected_date_str, "Username": username, **log}
-            logs_collection.insert_one(log_with_meta)
+            logs_collection.insert_one({"Date": selected_date_str, "Username": username, **log})
         st.success("Logs saved to MongoDB successfully!")
