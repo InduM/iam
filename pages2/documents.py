@@ -1,8 +1,8 @@
 import streamlit as st
 import pymongo
 import base64
-from dotenv import load_dotenv
-import os
+from PIL import Image
+import io
 from utils import is_logged_in
 
 def run():
@@ -51,7 +51,31 @@ def run():
         "aadhar":{"$exists":True}})
     uploaded_pan = collection.find_one({ "username":selected_user, 
         "pan":{"$exists":True}})
+    
+    if role == "admin":
+            st.subheader(f"Uploaded Documents for {selected_user}")
+            if uploaded_profile:
+                st.markdown("**Profile Image:**")
+                image_data = base64.b64decode(uploaded_profile["profile_image"]["data"])
+                st.image(image_data, caption=uploaded_profile["profile_image"]["filename"], width=256)
 
+            if uploaded_aadhar:
+                st.markdown("**Aadhar Document:**")
+                st.download_button(
+                    label="Download Aadhar",
+                    data=uploaded_aadhar["aadhar"]["data"],
+                    file_name=uploaded_aadhar["aadhar"]["filename"],
+                    mime=uploaded_aadhar["aadhar"]["type"]
+                )
+
+            if uploaded_pan:
+                st.markdown("**PAN Document:**")
+                st.download_button(
+                    label="Download PAN",
+                    data=uploaded_pan["pan"]["data"],
+                    file_name=uploaded_pan["pan"]["filename"],
+                    mime=uploaded_pan["pan"]["type"]
+                )
 
     # Form for user input
     with st.form("profile_form"):
@@ -69,18 +93,26 @@ def run():
             isDisabled = False
         submit = st.form_submit_button("Submit",disabled = isDisabled)
 
-    if submit and role != "admin":
+    if submit:
         profile_data ={}
         if not uploaded_profile and profile_image is not None:
-                image_bytes = profile_image.read()
-                image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-                profile_data.update({"profile_image": {
-                    "filename": profile_image.name,
-                    "data": image_b64,
-                    "type": profile_image.type}})
+            image = Image.open(profile_image)
+            image = image.convert("RGB")
+            image = image.resize((256, 256))
+            buffered = io.BytesIO()
+            image.save(buffered, format="JPEG")
+            image_bytes = buffered.getvalue()
+            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+            profile_data["profile_image"] = {
+                "filename": profile_image.name,
+                "data": image_b64,
+                "type": "image/jpeg"
+            }
+
         if not uploaded_aadhar and aadhar_file is not None:
                 aadhar_bytes = aadhar_file.read()
-                resume_b64 = base64.b64encode(aadhar_bytes).decode("utf-8")
+                aadhar_b64 = base64.b64encode(aadhar_bytes).decode("utf-8")
                 profile_data.update({"aadhar": {
                     "filename": aadhar_file.name,
                     "data": aadhar_bytes,
@@ -106,4 +138,4 @@ def run():
             st.warning("Please upload at least one document.")
 
 
-            
+      
