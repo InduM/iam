@@ -11,6 +11,7 @@ def run():
     client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
     db = client["user_db"]
     logs_collection = db["logs"]
+    users_collection = db["users"]
 
     def create_default_log():
         return {
@@ -32,6 +33,11 @@ def run():
         ("Time", 200), ("Project Name", 200), ("Client Name", 200), ("Priority", 200),
         ("Description", 200), ("Category", 300), ("Follow up", 300)
     ]
+    user_doc = users_collection.find_one({"email": username})
+    assigned_projects = user_doc.get("project", []) if user_doc else []
+    if isinstance(assigned_projects, str):
+        assigned_projects = [assigned_projects]
+
 
     # ✅ Session state setup
     if "last_selected_date" not in st.session_state:
