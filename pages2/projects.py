@@ -239,6 +239,7 @@ def run():
                 st.markdown(f"**Description:** {p.get('description', '-')}")
                 st.markdown(f"**Start Date:** {p.get('startDate', '-')}")
                 st.markdown(f"**Due Date:** {p.get('dueDate', '-')}")
+                st.markdown(f"**Manager/Lead:** {p.get('created_by', '-')}")
                 st.markdown(f"**Team Assigned:** {', '.join(p.get('team', [])) or '-'}")
                 levels = p.get("levels", [])
                 current_level = p.get("level", -1)
@@ -446,6 +447,11 @@ def run():
                     st.session_state.selected_template = ""
                     st.session_state.view = "dashboard"
                     update_users_with_project(team, name)
+                    # Also update the manager/team lead's profile with the project
+                    users_collection.update_one(
+                        {"username": st.session_state.get("username", "")},
+                        {"$addToSet": {"project": name}}
+                    )
                     st.rerun()
         update_users_with_project(team, name)
 

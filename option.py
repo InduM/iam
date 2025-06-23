@@ -59,15 +59,15 @@ else:
         if st.session_state["role"] == "admin":
             selected = option_menu(
                 None,
-                ["Profile", "Documents","Log","Users","Projects","Logout"],
-                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","box-arrow-right"],
+                ["Profile", "Documents","Log","Users","Projects","Clients","Logout"],
+                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","box-arrow-right"],
                 default_index=0
             )
         if st.session_state["role"] == "manager":
             selected = option_menu(
                 None,
-                ["Profile", "Documents","Log","Users","Projects","Logout"],
-                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","box-arrow-right"],
+                ["Profile", "Documents","Log","Users","Projects","Clients","Logout"],
+                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","box-arrow-right"],
                 default_index=0
             )
 
