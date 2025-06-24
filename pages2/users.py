@@ -164,8 +164,14 @@ def run():
                     project_str = ", ".join(projects) if projects else "None"
             else:
                     project_str = projects  # fallback if it's not a list
-            st.write(f"**Current Projects:** {project_str}")            
-            completed_projects = member.get("completed_projects", [])
+            st.write(f"**Current Projects:** {project_str}")
+
+            completed_raw = member.get("completed_projects", [])
+            completed_projects = (
+                [p for p in completed_raw if isinstance(p, str) and p.strip()]
+                if isinstance(completed_raw, list)
+                else []
+            )
             if isinstance(completed_projects, list):
                 completed_project_str = ", ".join(completed_projects) if completed_projects else "None"
             else:
@@ -176,9 +182,8 @@ def run():
                 st.session_state.edit_mode = True
                 st.rerun()
 
-            # 🔍 Show Everyday Log if current user is a manager
-                # 🔍 Show Everyday Log if current user is a manager
-            if st.session_state.get("role") == "manager":
+            # 🔍 Show Everyday Log if current user is a manager or admin
+            if st.session_state.get("role") in ["manager", "admin"]:
                 logs_collection = get_logs_collection()
 
                 # ✅ Date selector
@@ -186,7 +191,12 @@ def run():
 
                 # ✅ Query logs for selected member on that date
                 query_date_str = selected_log_date.strftime("%Y-%m-%d")
-                query_username = member["email"].split("@")[0]
+                email = member.get("email", "")
+                if not isinstance(email, str) or "@" not in email:
+                    st.warning("⚠️ Cannot retrieve logs: Invalid email format.")
+                    return
+
+                query_username = email.split("@")[0]
                 logs = list(logs_collection.find(
                     {"Date": query_date_str, "Username": query_username},
                     {"_id": 0, "Date": 0, "Username": 0}

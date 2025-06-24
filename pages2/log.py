@@ -1,6 +1,6 @@
 import streamlit as st
 from utils import is_logged_in
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, timedelta
 from pymongo import MongoClient
 import certifi
 
@@ -44,7 +44,6 @@ def run():
     def get_client_names():
         try:
             # Assuming clients collection has documents with a "name" field
-            # Adjust the field name based on your actual MongoDB structure
             clients = list(clients_collection.find({}, {"name": 1, "_id": 0}))
             client_names = [client.get("name", "") for client in clients if client.get("name")]
             return sorted(client_names)  # Sort alphabetically
