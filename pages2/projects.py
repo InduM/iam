@@ -434,6 +434,17 @@ def run():
                             st.session_state.projects = [proj for proj in st.session_state.projects if proj["id"] != pid]
                             remove_project_from_all_users(p.get("name", "Unnamed"))  # Remove project from all user profiles
                             st.success("Project deleted from database.")
+                            # Update client project count after deletion
+                            try:
+                                client_name = p.get("client", "")
+                                updated_count = projects_collection.count_documents({"client": client_name})
+                                clients_collection.update_one(
+                                    {"name": client_name},
+                                    {"$set": {"project_count": updated_count}}
+                                )
+                            except Exception as e:
+                                st.warning(f"Failed to update project count after deletion: {e}")
+
                         st.session_state.confirm_delete[confirm_key] = False
                         st.rerun()
                     if col_no.button("❌ No", key=f"no_{pid}"):
@@ -551,6 +562,17 @@ def run():
                     new_proj["id"] = project_id
                     st.session_state.projects.append(new_proj)
                     st.success("Project created and saved to database!")
+                    # Update the client's project count
+                    try:
+                        project_count = projects_collection.count_documents({"client": client})
+                        clients_collection.update_one(
+                            {"name": client},
+                            {"$set": {"project_count": project_count}}
+                        )
+                    except Exception as e:
+                        st.warning(f"Project saved, but failed to update client project count: {e}")
+
+                    
                     # Reset form state
                     st.session_state.level_index = -1
                     st.session_state.level_timestamps = {}
@@ -660,6 +682,28 @@ def run():
                 }
                 
                 if update_project_in_db(pid, updated_project):
+                    # Recalculate project count for the (possibly new) client
+                    try:
+                        updated_count = projects_collection.count_documents({"client": client})
+                        clients_collection.update_one(
+                            {"name": client},
+                            {"$set": {"project_count": updated_count}}
+                        )
+                    except Exception as e:
+                        st.warning(f"Failed to update project count for edited client: {e}")
+
+                    # Also update old client count if the client was changed
+                    if client != project.get("client", ""):
+                        try:
+                            old_client = project.get("client", "")
+                            old_count = projects_collection.count_documents({"client": old_client})
+                            clients_collection.update_one(
+                                {"name": old_client},
+                                {"$set": {"project_count": old_count}}
+                            )
+                        except Exception as e:
+                            st.warning(f"Failed to update project count for old client: {e}")
+
                     success_messages = []
                     
                     # Check if project name has changed and update user profiles accordingly

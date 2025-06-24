@@ -12,6 +12,7 @@ def run():
     client = init_connection()
     db = client["user_db"]
     clients_collection = db["clients"]
+    projects_collection = db["projects"]  # Added projects collection reference
 
     # ───── Session State ─────
     for key, default in {
@@ -53,7 +54,33 @@ def run():
     def update_client(cid, data):
         try:
             object_id = ObjectId(cid)
+            
+            # Get the old client data before updating
+            old_client = clients_collection.find_one({"_id": object_id})
+            if not old_client:
+                st.error("Client not found.")
+                return False
+            
+            old_name = old_client.get("name", "")
+            new_name = data.get("name", "")
+            
+            # Update the client
             result = clients_collection.update_one({"_id": object_id}, {"$set": data})
+            
+            # If client name changed, update all related projects
+            if result.modified_count > 0 and old_name != new_name:
+                try:
+                    # Update all projects that reference this client
+                    projects_update_result = projects_collection.update_many(
+                        {"client": old_name},
+                        {"$set": {"client": new_name}}
+                    )
+                    
+                    if projects_update_result.modified_count > 0:
+                        st.info(f"Updated {projects_update_result.modified_count} project(s) with new client name.")
+                except Exception as e:
+                    st.warning(f"Client updated but failed to update related projects: {e}")
+            
             return result.modified_count > 0
         except Exception as e:
             st.error(f"Error updating client: {e}")
@@ -62,6 +89,18 @@ def run():
     def delete_client(cid):
         try:
             object_id = ObjectId(cid)
+            
+            # Get client name before deletion to check for related projects
+            client_to_delete = clients_collection.find_one({"_id": object_id})
+            if client_to_delete:
+                client_name = client_to_delete.get("name", "")
+                
+                # Check if there are any projects using this client
+                related_projects = projects_collection.count_documents({"client": client_name})
+                if related_projects > 0:
+                    st.error(f"Cannot delete client. There are {related_projects} project(s) associated with this client. Please delete or reassign those projects first.")
+                    return False
+            
             result = clients_collection.delete_one({"_id": object_id})
             return result.deleted_count > 0
         except Exception as e:
@@ -94,10 +133,21 @@ def run():
 
         for client in clients:
             cid = client["id"]
-            with st.expander(f"{client.get('name', 'Unnamed')} – {client.get('company', '-')}"):
+            client_name = client.get('name', 'Unnamed')
+            
+            # Count related projects for this client
+            try:
+                project_count = projects_collection.count_documents({"client": client_name})
+                project_info = f" ({project_count} project{'s' if project_count != 1 else ''})"
+            except:
+                project_info = ""
+            
+            with st.expander(f"{client_name} – {client.get('company', '-')}{project_info}"):
                 st.markdown(f"**Email:** {client.get('email', '-')}")
                 st.markdown(f"**Created By:** {client.get('created_by', '-')}")
                 st.markdown(f"**Created At:** {client.get('created_at', '-')}")
+                if project_count > 0:
+                    st.markdown(f"**Related Projects:** {project_count}")
 
                 col1, col2 = st.columns(2)
                 if col1.button("✏ Edit", key=f"edit_{cid}"):
@@ -112,6 +162,8 @@ def run():
                         st.rerun()
                 else:
                     st.warning("Are you sure?")
+                    if project_count > 0:
+                        st.error(f"This client has {project_count} associated project(s). Delete or reassign them first.")
                     col_yes, col_no = st.columns(2)
                     if col_yes.button("✅ Yes", key=f"yes_{cid}"):
                         if delete_client(cid):
@@ -162,6 +214,15 @@ def run():
         if not client:
             st.error("Client not found.")
             return
+
+        # Show current client name and related projects count
+        current_name = client.get("name", "")
+        try:
+            project_count = projects_collection.count_documents({"client": current_name})
+            if project_count > 0:
+                st.info(f"⚠️ This client has {project_count} associated project(s). Changing the name will update all related projects.")
+        except:
+            pass
 
         name = st.text_input("Name", value=client.get("name", ""))
         email = st.text_input("Email", value=client.get("email", ""))
