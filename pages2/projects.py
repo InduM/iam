@@ -228,6 +228,10 @@ def run():
 
     # ───── User Profile Update Functions ─────
     def update_project_name_in_user_profiles(old_name, new_name):
+        existing_project = projects_collection.find_one({"name": new_name})
+        if existing_project and existing_project["_id"] != st.session_state.edit_project_id:
+            st.error("Another project with this name already exists.")
+            st.stop()
         """Update project name in all user profiles when a project name is changed"""
         try:
             # Update all users who have the old project name in their project list
@@ -540,6 +544,8 @@ def run():
                 st.error("Cannot submit: Due date must be later than the start date.")
             elif not name or not client:
                 st.error("Name and client are required.")
+            elif projects_collection.find_one({"name": name}):
+                st.error("A project with this name already exists. Please choose a different name.")
             else:
                 new_proj = {
                     "name": name,

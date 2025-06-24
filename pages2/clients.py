@@ -175,7 +175,6 @@ def run():
                         st.rerun()
 
     def show_create_form():
-        st.title("➕ Create Client")
         if st.button("← Back"):
             st.session_state.client_view = "dashboard"
             st.rerun()
