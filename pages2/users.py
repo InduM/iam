@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import date
 from pymongo import MongoClient
 import certifi
-import base64
 
 def run():
         # 🔌 Connect to MongoDB Atlas
@@ -46,7 +45,6 @@ def run():
     if "edit_mode" not in st.session_state:
         st.session_state.edit_mode = False
 
-    default_img_path ="images/img_avatar.png"
 
     # 🔙 Navigation helpers
     def go_back():
@@ -175,7 +173,6 @@ def run():
 
     # 👥 Team View Page
     def show_team():
-        
         team_data = load_team_data()
         current_role = st.session_state.get("role")
         if current_role == "manager":
@@ -211,6 +208,9 @@ def run():
             ]
         if search_query:
             filtered = filtered[filtered["name"].str.contains(search_query, case=False)]
+
+        # ✅ Sort by name alphabetically
+        filtered = filtered.sort_values(by="name", ascending=True, na_position='last')
 
         # --- Display Team Members (left-to-right layout) ---
         num_columns = 2  # Adjust for more per row if needed

@@ -2,7 +2,6 @@ import streamlit as st
 from utils import is_logged_in
 import pymongo
 import base64
-import os
 
 def run():
     

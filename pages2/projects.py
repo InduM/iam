@@ -186,14 +186,70 @@ def run():
                 on_change=callback if editable and on_change_fn else None
             )
 
+    # ───── User Profile Update Functions ─────
+    def update_project_name_in_user_profiles(old_name, new_name):
+        """Update project name in all user profiles when a project name is changed"""
+        try:
+            # Update all users who have the old project name in their project list
+            result = users_collection.update_many(
+                {"project": old_name},
+                {"$set": {"project.$": new_name}}
+            )
+            return result.modified_count
+        except Exception as e:
+            st.error(f"Error updating project name in user profiles: {e}")
+            return 0
+
+    def remove_project_from_all_users(project_name):
+        """Remove a project from all user profiles"""
+        try:
+            users_collection.update_many(
+                {"project": project_name},
+                {"$pull": {"project": project_name}}
+            )
+        except Exception as e:
+            st.error(f"Error removing project from user profiles: {e}")
+
+    def update_users_with_project(team_list, project_name):
+        """Add project to user profiles for team members"""
+        try:
+            for user in team_list:
+                # Step 1: Ensure the project field is a list if it exists as a string
+                user_doc = users_collection.find_one({"name": user})
+                if user_doc:
+                    if "project" in user_doc and isinstance(user_doc["project"], str):
+                        users_collection.update_one(
+                            {"name": user},
+                            {"$set": {"project": [user_doc["project"]]}}
+                        )
+                    elif "project" not in user_doc:
+                        users_collection.update_one(
+                            {"name": user},
+                            {"$set": {"project": []}}
+                        )
+
+                # Step 2: Add new project without duplicates
+                users_collection.update_one(
+                    {"name": user},
+                    {"$addToSet": {"project": project_name}}
+                )
+        except Exception as e:
+            st.error(f"Error updating users with project: {e}")
+
+    def remove_project_from_users(old_team, new_team, project_name):
+        """Remove project from users who are no longer on the team"""
+        try:
+            removed_users = set(old_team) - set(new_team)
+            for user in removed_users:
+                users_collection.update_one(
+                    {"name": user},
+                    {"$pull": {"project": project_name}}
+                )
+        except Exception as e:
+            st.error(f"Error removing project from users: {e}")
+
     # ───── Pages ─────
     def show_dashboard():
-
-        def remove_project_from_all_users(project_name):
-            users_collection.update_many(
-            {"project": project_name},
-            {"$pull": {"project": project_name}}
-            )
         st.query_params["_"]=str(int(time.time() // 60)) #Trigger rerun every 60 seconds
 
         col1, col2 = st.columns([1, 1])
@@ -311,38 +367,13 @@ def run():
                     if col_yes.button("✅ Yes", key=f"yes_{pid}"):
                         if delete_project_from_db(pid):
                             st.session_state.projects = [proj for proj in st.session_state.projects if proj["id"] != pid]
-                            remove_project_from_all_users(p.get("name", "Unnamed"))  # 🔁 Remove project from all user profiles
+                            remove_project_from_all_users(p.get("name", "Unnamed"))  # Remove project from all user profiles
                             st.success("Project deleted from database.")
                         st.session_state.confirm_delete[confirm_key] = False
                         st.rerun()
                     if col_no.button("❌ No", key=f"no_{pid}"):
                         st.session_state.confirm_delete[confirm_key] = False
                         st.rerun()
-    
-    
-    users_collection = db["users"]  # 👈 Ensure this is defined near the top
-    def update_users_with_project(team_list, project_name):
-        for user in team_list:
-            # Step 1: Ensure the project field is a list if it exists as a string
-            user_doc = users_collection.find_one({"name": user})
-            if user_doc:
-                if "project" in user_doc and isinstance(user_doc["project"], str):
-                    users_collection.update_one(
-                        {"name": user},
-                        {"$set": {"project": [user_doc["project"]]}}
-                    )
-                elif "project" not in user_doc:
-                    users_collection.update_one(
-                        {"name": user},
-                        {"$set": {"project": []}}
-                    )
-
-            # Step 2: Add new project without duplicates
-            users_collection.update_one(
-                {"name": user},
-                {"$addToSet": {"project": project_name}}
-            )
-
 
     def show_create_form():
         st.title("🛠 Create Project")
@@ -468,16 +499,6 @@ def run():
                         {"$addToSet": {"project": name}}
                     )
                     st.rerun()
-        update_users_with_project(team, name)
-
-    def remove_project_from_users(old_team, new_team, project_name):
-        removed_users = set(old_team) - set(new_team)
-        for user in removed_users:
-            users_collection.update_one(
-                {"name": user},
-                {"$pull": {"project": project_name}}
-            )
-
 
     def show_edit_form():
         st.title("✏ Edit Project")
@@ -494,6 +515,8 @@ def run():
             return
 
         original_team = project.get("team", [])
+        original_name = project.get("name", "")  # Store original name for comparison
+        
         name = st.text_input("Project Name", value=project["name"])
         CLIENTS = get_all_clients()
         if not CLIENTS:
@@ -541,13 +564,39 @@ def run():
                 }
                 
                 if update_project_in_db(pid, updated_project):
+                    success_messages = []
+                    
+                    # Check if project name has changed and update user profiles accordingly
+                    if original_name != name:
+                        updated_count = update_project_name_in_user_profiles(original_name, name)
+                        if updated_count > 0:
+                            success_messages.append(f"Project name updated in {updated_count} user profiles!")
+                    
+                    # Handle team member changes
+                    added_users = set(team) - set(original_team)
+                    removed_users = set(original_team) - set(team)
+                    
+                    if added_users:
+                        # Add new project to newly assigned users (use current project name)
+                        update_users_with_project(list(added_users), name)
+                        success_messages.append(f"Project added to {len(added_users)} new team member(s): {', '.join(added_users)}")
+                    
+                    if removed_users:
+                        # Remove project from users who are no longer on the team (use current project name)
+                        remove_project_from_users(list(removed_users), [], name)
+                        success_messages.append(f"Project removed from {len(removed_users)} former team member(s): {', '.join(removed_users)}")
+                    
                     project.update(updated_project)
-                    st.success("Changes saved to database!")
+                    
+                    # Display all success messages
+                    if success_messages:
+                        for message in success_messages:
+                            st.success(message)
+                    else:
+                        st.success("Changes saved to database!")
+                    
                     st.session_state.view = "dashboard"
-                    update_users_with_project(team, name)
-                    remove_project_from_users(original_team, team, name)  # remove project from users who were unassigned
                     st.rerun()
-        update_users_with_project(team, name)
 
     # ───── Navigation ─────
     if st.session_state.view == "dashboard":

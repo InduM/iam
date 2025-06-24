@@ -34,7 +34,7 @@ def run():
         ("Time", 200), ("Project Name", 200), ("Client Name", 200), ("Priority", 200),
         ("Description", 200), ("Category", 300), ("Follow up", 300)
     ]
-    user_doc = users_collection.find_one({"email": username})
+    user_doc = users_collection.find_one({"username": username})
     assigned_projects = user_doc.get("project", []) if user_doc else []
     if isinstance(assigned_projects, str):
         assigned_projects = [assigned_projects]
@@ -52,7 +52,20 @@ def run():
             st.error(f"Error fetching clients: {e}")
             return []
 
+    # ✅ Get user's assigned projects
+    def get_user_projects():
+        try:
+            # Return sorted list of assigned projects
+            if assigned_projects:
+                return sorted(assigned_projects)
+            else:
+                return []
+        except Exception as e:
+            st.error(f"Error getting user projects: {e}")
+            return []
+
     client_names = get_client_names()
+    user_projects = get_user_projects()
 
     # ✅ Session state setup
     if "last_selected_date" not in st.session_state:
@@ -162,7 +175,15 @@ def run():
                         log[col] = selected_client
 
                     elif col == "Project Name":
-                        log[col] = st.text_input("", value=log[col], key=key, label_visibility="collapsed")
+                        # Create dropdown with user's assigned projects
+                        project_options = [""] + user_projects  # Add empty option at the beginning
+                        try:
+                            current_index = project_options.index(log[col]) if log[col] in project_options else 0
+                        except ValueError:
+                            current_index = 0
+                        
+                        selected_project = st.selectbox("", options=project_options, index=current_index, key=key, label_visibility="collapsed")
+                        log[col] = selected_project
 
                     else:
                         log[col] = st.text_area("", value=log[col], key=key, label_visibility="collapsed")
