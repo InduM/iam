@@ -1,8 +1,9 @@
 import streamlit as st
 from utils import is_logged_in
-from datetime import datetime, date, time
+from datetime import datetime, date, timedelta
 from pymongo import MongoClient
 import certifi
+
 
 def run():
     # ✅ MongoDB connection
@@ -10,6 +11,8 @@ def run():
     client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
     db = client["user_db"]
     logs_collection = db["logs"]
+    users_collection = db["users"]
+    clients_collection = db["clients"]  # Add clients collection
 
     def create_default_log():
         return {
@@ -22,42 +25,70 @@ def run():
             "Follow up": ""
         }
 
-    # ✅ Check login
+    # ✅ Login check
     if not is_logged_in():
         st.switch_page("option.py")
 
     username = st.session_state["username"]
-    st.title("📘 Everyday Log")
-
     log_columns = [
-        ("Time", 200),
-        ("Project Name", 200),
-        ("Client Name", 200),
-        ("Priority", 200),
-        ("Description", 200),
-        ("Category", 300),
-        ("Follow up", 300)
+        ("Time", 200), ("Project Name", 200), ("Client Name", 200), ("Priority", 200),
+        ("Description", 200), ("Category", 300), ("Follow up", 300)
     ]
+    user_doc = users_collection.find_one({"username": username})
+    assigned_projects = user_doc.get("project", []) if user_doc else []
+    if isinstance(assigned_projects, str):
+        assigned_projects = [assigned_projects]
+
+    # ✅ Fetch client names from MongoDB
+    @st.cache_data(ttl=300)  # Cache for 5 minutes to improve performance
+    def get_client_names():
+        try:
+            # Assuming clients collection has documents with a "name" field
+            clients = list(clients_collection.find({}, {"name": 1, "_id": 0}))
+            client_names = [client.get("name", "") for client in clients if client.get("name")]
+            return sorted(client_names)  # Sort alphabetically
+        except Exception as e:
+            st.error(f"Error fetching clients: {e}")
+            return []
+
+    # ✅ Get user's assigned projects
+    def get_user_projects():
+        try:
+            # Return sorted list of assigned projects
+            if assigned_projects:
+                return sorted(assigned_projects)
+            else:
+                return []
+        except Exception as e:
+            st.error(f"Error getting user projects: {e}")
+            return []
+
+    client_names = get_client_names()
+    user_projects = get_user_projects()
 
     # ✅ Session state setup
-    if "selected_date" not in st.session_state:
-        st.session_state.selected_date = date.today()
-
     if "last_selected_date" not in st.session_state:
         st.session_state.last_selected_date = None
-
     if "logs" not in st.session_state:
         st.session_state.logs = []
-
     if "refresh_triggered" not in st.session_state:
         st.session_state.refresh_triggered = False
 
-    # ✅ Datepicker & Buttons
-    col1, col2, col3 = st.columns([5, 1, 1])
+    # ✅ Datepicker & control buttons
+    today = date.today()
+    default_date = today
+    start_of_week = today - timedelta(days=today.weekday())
+    start_of_prev_week = start_of_week - timedelta(days=7)
+    end_of_week = start_of_week + timedelta(days=6)
+
+    col1, col2, col3 = st.columns([5, 1, 2])
     with col1:
-        selected_date = st.date_input("", st.session_state.selected_date, key="selected_date", label_visibility="collapsed")
+        selected_date = st.date_input("", value=default_date, key="selected_date", label_visibility="collapsed")
+        can_add_log = start_of_prev_week <= selected_date <= end_of_week
+
     with col2:
-        st.button("➕ Log", on_click=lambda: st.session_state.logs.append(create_default_log()))
+        st.button("➕ Log", on_click=lambda: st.session_state.logs.append(create_default_log()), disabled=not can_add_log)
+
     with col3:
         def refresh_logs():
             with st.spinner("Refreshing logs..."):
@@ -74,7 +105,7 @@ def run():
 
     selected_date_str = st.session_state.selected_date.strftime("%Y-%m-%d")
 
-    # ✅ Fetch logs on first load or when date changes
+    # ✅ Fetch logs on date change
     if st.session_state.last_selected_date != st.session_state.selected_date:
         st.session_state.logs = []
         query = {"Date": selected_date_str, "Username": username}
@@ -94,7 +125,6 @@ def run():
         del st.session_state.logs[index]
 
     # ✅ Log table
-    st.markdown("#### 📝 Logs for Selected Date")
     with st.container():
         st.markdown('<div class="scroll-container"><div class="block-container">', unsafe_allow_html=True)
 
@@ -111,32 +141,48 @@ def run():
                     st.markdown("<div class='column-input'>", unsafe_allow_html=True)
 
                     if col == "Time":
-                        if isinstance(log[col], str):
-                            log_time = datetime.strptime(log[col], "%H:%M").time()
-                        elif isinstance(log[col], datetime):
-                            log_time = log[col].time()
-                        elif isinstance(log[col], time):
-                            log_time = log[col]
-                        else:
-                            log_time = datetime.now().time().replace(second=0, microsecond=0)
+                        log_time = datetime.strptime(log[col], "%H:%M").time() if isinstance(log[col], str) else log.get(col, datetime.now().time())
                         new_time = st.time_input("", value=log_time, key=key, label_visibility="collapsed")
                         log[col] = new_time.strftime("%H:%M")
 
                     elif col == "Priority":
                         options = ["Low", "Medium", "High"]
-                        log[col] = st.selectbox("", options=options, key=key, label_visibility="collapsed")
+                        current_index = options.index(log[col]) if log[col] in options else 0
+                        log[col] = st.selectbox("", options=options, index=current_index, key=key, label_visibility="collapsed")
 
                     elif col == "Category":
-                        options = ["Audit-Physical", "Audit-Digital", "Audit-Design", "Audit-Accessibility",
-                                   "Audit-Policy", "Training-Onwards", "Training-Regular", "Sessions-Kiosk",
-                                   "Sessions-Sensitization", "Sessions-Awareness", "Recruitment", "Other"]
-                        log[col] = st.selectbox("", options=options, key=key, label_visibility="collapsed")
+                        options = [
+                            "Audit-Physical", "Audit-Digital", "Audit-Design", "Audit-Accessibility",
+                            "Audit-Policy", "Training-Onwards", "Training-Regular", "Sessions-Kiosk",
+                            "Sessions-Sensitization", "Sessions-Awareness", "Recruitment", "Other"
+                        ]
+                        current_index = options.index(log[col]) if log[col] in options else 0
+                        log[col] = st.selectbox("", options=options, index=current_index, key=key, label_visibility="collapsed")
                         if log[col] == "Other":
                             custom = st.text_input("Specify Other", label_visibility="collapsed", key=key + "_custom")
                             log[col] = custom
 
-                    elif col in ["Client Name", "Project Name"]:
-                        log[col] = st.text_input("", value=log[col], key=key, label_visibility="collapsed")
+                    elif col == "Client Name":
+                        # Create dropdown with client names from MongoDB
+                        client_options = [""] + client_names  # Add empty option at the beginning
+                        try:
+                            current_index = client_options.index(log[col]) if log[col] in client_options else 0
+                        except ValueError:
+                            current_index = 0
+                        
+                        selected_client = st.selectbox("", options=client_options, index=current_index, key=key, label_visibility="collapsed")
+                        log[col] = selected_client
+
+                    elif col == "Project Name":
+                        # Create dropdown with user's assigned projects
+                        project_options = [""] + user_projects  # Add empty option at the beginning
+                        try:
+                            current_index = project_options.index(log[col]) if log[col] in project_options else 0
+                        except ValueError:
+                            current_index = 0
+                        
+                        selected_project = st.selectbox("", options=project_options, index=current_index, key=key, label_visibility="collapsed")
+                        log[col] = selected_project
 
                     else:
                         log[col] = st.text_area("", value=log[col], key=key, label_visibility="collapsed")
@@ -150,9 +196,8 @@ def run():
         st.markdown('</div></div>', unsafe_allow_html=True)
 
     # ✅ Save logs
-    if st.button("💾 Save Logs"):
+    if st.button("💾 Save"):
         logs_collection.delete_many({"Date": selected_date_str, "Username": username})
         for log in st.session_state.logs:
-            log_with_meta = {"Date": selected_date_str, "Username": username, **log}
-            logs_collection.insert_one(log_with_meta)
+            logs_collection.insert_one({"Date": selected_date_str, "Username": username, **log})
         st.success("Logs saved to MongoDB successfully!")
