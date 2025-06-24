@@ -126,14 +126,13 @@ def run():
     users_collection = db["users"]
 
     @st.cache_data
-    def get_team_members():
-        role = st.session_state.get("role", "")
+    def get_team_members(role):
         if role == "manager":
-            return [u["name"] for u in users_collection.find({"role": "user"})]
+            return [u["name"] for u in users_collection.find({"role": "user"})if "name" in u]
         else:
-            return [u["name"] for u in users_collection.find()]
+            return [u["name"] for u in users_collection.find() if "name" in u]
 
-    TEAM_MEMBERS = get_team_members()
+    TEAM_MEMBERS = get_team_members(st.session_state.get("role", ""))
 
 
     # ───── Session State ─────

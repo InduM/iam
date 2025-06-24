@@ -12,6 +12,7 @@ def run():
     db = client["user_db"]
     logs_collection = db["logs"]
     users_collection = db["users"]
+    clients_collection = db["clients"]  # Add clients collection
 
     def create_default_log():
         return {
@@ -38,6 +39,20 @@ def run():
     if isinstance(assigned_projects, str):
         assigned_projects = [assigned_projects]
 
+    # ✅ Fetch client names from MongoDB
+    @st.cache_data(ttl=300)  # Cache for 5 minutes to improve performance
+    def get_client_names():
+        try:
+            # Assuming clients collection has documents with a "name" field
+            # Adjust the field name based on your actual MongoDB structure
+            clients = list(clients_collection.find({}, {"name": 1, "_id": 0}))
+            client_names = [client.get("name", "") for client in clients if client.get("name")]
+            return sorted(client_names)  # Sort alphabetically
+        except Exception as e:
+            st.error(f"Error fetching clients: {e}")
+            return []
+
+    client_names = get_client_names()
 
     # ✅ Session state setup
     if "last_selected_date" not in st.session_state:
@@ -120,7 +135,8 @@ def run():
 
                     elif col == "Priority":
                         options = ["Low", "Medium", "High"]
-                        log[col] = st.selectbox("", options=options, key=key, label_visibility="collapsed")
+                        current_index = options.index(log[col]) if log[col] in options else 0
+                        log[col] = st.selectbox("", options=options, index=current_index, key=key, label_visibility="collapsed")
 
                     elif col == "Category":
                         options = [
@@ -128,12 +144,24 @@ def run():
                             "Audit-Policy", "Training-Onwards", "Training-Regular", "Sessions-Kiosk",
                             "Sessions-Sensitization", "Sessions-Awareness", "Recruitment", "Other"
                         ]
-                        log[col] = st.selectbox("", options=options, key=key, label_visibility="collapsed")
+                        current_index = options.index(log[col]) if log[col] in options else 0
+                        log[col] = st.selectbox("", options=options, index=current_index, key=key, label_visibility="collapsed")
                         if log[col] == "Other":
                             custom = st.text_input("Specify Other", label_visibility="collapsed", key=key + "_custom")
                             log[col] = custom
 
-                    elif col in ["Client Name", "Project Name"]:
+                    elif col == "Client Name":
+                        # Create dropdown with client names from MongoDB
+                        client_options = [""] + client_names  # Add empty option at the beginning
+                        try:
+                            current_index = client_options.index(log[col]) if log[col] in client_options else 0
+                        except ValueError:
+                            current_index = 0
+                        
+                        selected_client = st.selectbox("", options=client_options, index=current_index, key=key, label_visibility="collapsed")
+                        log[col] = selected_client
+
+                    elif col == "Project Name":
                         log[col] = st.text_input("", value=log[col], key=key, label_visibility="collapsed")
 
                     else:
