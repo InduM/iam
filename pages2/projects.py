@@ -36,6 +36,15 @@ def run():
             projects = list(projects_collection.find(query))
             for project in projects:
                 project["id"] = str(project["_id"])  # Convert ObjectId for Streamlit
+                # Ensure all projects have required fields with defaults
+                if "levels" not in project:
+                    project["levels"] = ["Initial", "Invoice", "Payment"]
+                if "level" not in project:
+                    project["level"] = -1
+                if "timestamps" not in project:
+                    project["timestamps"] = {}
+                if "team" not in project:
+                    project["team"] = []
             return projects
         except Exception as e:
             st.error(f"Error loading projects: {e}")
@@ -103,6 +112,34 @@ def run():
             st.error(f"Error updating project level: {e}")
             return False
 
+    def move_project_to_completed(project_name, team_members):
+        """Move project from 'projects' to 'completed_projects' for all team members"""
+        try:
+            # Get all users who have this project in their projects list
+            users_to_update = list(users_collection.find({"project": project_name}))
+            
+            for user in users_to_update:
+                # Initialize completed_projects field if it doesn't exist
+                if "completed_projects" not in user:
+                    users_collection.update_one(
+                        {"_id": user["_id"]},
+                        {"$set": {"completed_projects": []}}
+                    )
+                
+                # Move project from projects to completed_projects
+                users_collection.update_one(
+                    {"_id": user["_id"]},
+                    {
+                        "$pull": {"project": project_name},
+                        "$addToSet": {"completed_projects": project_name}
+                    }
+                )
+            
+            return len(users_to_update)
+        except Exception as e:
+            st.error(f"Error moving project to completed: {e}")
+            return 0
+
     # ───── Email Sender ─────
     def send_invoice_email(to_email, project_name):
         try:
@@ -159,7 +196,10 @@ def run():
     def format_level(i, levels: List[str]):
         try:
             i = int(i)
-            return f"Level {i+1} – {str(levels[i])}"
+            if i >= 0 and i < len(levels):
+                return f"Level {i+1} – {str(levels[i])}"
+            else:
+                return f"Level {i+1}"
         except Exception:
             return f"Level {i+1}"
 
@@ -295,6 +335,7 @@ def run():
                 p for p in filtered_projects
                 if p.get("level", -1) >= 0 and
                 p.get("levels") and
+                len(p["levels"]) > p.get("level", -1) and
                 p["levels"][p["level"]] == filter_level
             ]
 
@@ -307,7 +348,7 @@ def run():
                 st.markdown(f"**Due Date:** {p.get('dueDate', '-')}")
                 st.markdown(f"**Manager/Lead:** {p.get('created_by', '-')}")
                 st.markdown(f"**Team Assigned:** {', '.join(p.get('team', [])) or '-'}")
-                levels = p.get("levels", [])
+                levels = p.get("levels", ["Initial", "Invoice", "Payment"])  # Default levels if none exist
                 current_level = p.get("level", -1)
                 st.markdown(f"**Current Level:** {format_level(current_level, levels)}")
                 
@@ -316,10 +357,23 @@ def run():
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     if update_project_level_in_db(proj_id, new_index, timestamp):
                         # Update local state
+                        old_level = proj["level"]
                         proj["level"] = new_index
                         if "timestamps" not in proj:
                             proj["timestamps"] = {}
                         proj["timestamps"][str(new_index)] = timestamp
+                        
+                        # Check if project reached Payment stage
+                        project_levels = proj.get("levels", [])
+                        if (new_index >= 0 and new_index < len(project_levels) and 
+                            project_levels[new_index] == "Payment"):
+                            # Move project to completed for all team members
+                            project_name = proj.get("name", "")
+                            team_members = proj.get("team", [])
+                            moved_count = move_project_to_completed(project_name, team_members)
+                            if moved_count > 0:
+                                st.session_state[f"project_completed_message_{proj_id}"] = f"Project moved to completed for {moved_count} team member(s)!"
+                        
                         # Store success message to show after rerun
                         st.session_state[f"level_update_success_{proj_id}"] = True
                 
@@ -328,13 +382,24 @@ def run():
                     st.success("Project level updated!")
                     st.session_state[f"level_update_success_{pid}"] = False
                 
+                # Check for project completion message
+                if st.session_state.get(f"project_completed_message_{pid}", False):
+                    st.success(st.session_state[f"project_completed_message_{pid}"])
+                    st.session_state[f"project_completed_message_{pid}"] = False
+                
                 render_level_checkboxes("view", pid, int(p.get("level", -1)), p.get("timestamps", {}), levels, on_change_dashboard, editable=True)
                 
                 # --- Email Reminder ---
                 project_name = p.get("name", "Unnamed")
-                lead_email = st.secrets["project_leads"].get("Project Alpha")
-                invoice_index = p["levels"].index("Invoice") if "Invoice" in p["levels"] else -1
-                payment_index = p["levels"].index("Payment") if "Payment" in p["levels"] else -1
+                lead_email = st.secrets.get("project_leads", {}).get("Project Alpha")
+                
+                # Safe check for Invoice and Payment levels
+                try:
+                    invoice_index = levels.index("Invoice") if "Invoice" in levels else -1
+                    payment_index = levels.index("Payment") if "Payment" in levels else -1
+                except (ValueError, AttributeError):
+                    invoice_index = -1
+                    payment_index = -1
 
                 email_key = f"last_email_sent_{pid}"
                 if email_key not in st.session_state:
@@ -514,36 +579,64 @@ def run():
             st.error("Project not found.")
             return
 
+        # Ensure project has required fields with defaults
+        if "levels" not in project:
+            project["levels"] = ["Initial", "Invoice", "Payment"]
+        if "level" not in project:
+            project["level"] = -1
+        if "timestamps" not in project:
+            project["timestamps"] = {}
+        if "team" not in project:
+            project["team"] = []
+
         original_team = project.get("team", [])
         original_name = project.get("name", "")  # Store original name for comparison
         
-        name = st.text_input("Project Name", value=project["name"])
+        name = st.text_input("Project Name", value=project.get("name", ""))
         CLIENTS = get_all_clients()
         if not CLIENTS:
             st.warning("⚠ No clients found in the database.")
         client = st.selectbox("Client",
                                options=CLIENTS, 
-                               index=CLIENTS.index(project["client"]) if project["client"] in CLIENTS else 0)
-        description = st.text_area("Project Description", value=project["description"])
-        start = st.date_input("Start Date", value=date.fromisoformat(project["startDate"]))
-        due = st.date_input("Due Date", value=date.fromisoformat(project["dueDate"]))
+                               index=CLIENTS.index(project.get("client", "")) if project.get("client", "") in CLIENTS else 0)
+        description = st.text_area("Project Description", value=project.get("description", ""))
+        start = st.date_input("Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
+        due = st.date_input("Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
         team = st.multiselect("Assign Team", TEAM_MEMBERS, default=project.get("team", []))
 
         st.subheader("Progress")
         def on_change_edit(new_index):
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            old_level = project["level"]
             project["level"] = new_index
             project.setdefault("timestamps", {})[str(new_index)] = timestamp
+            
             # Update in database immediately
             if update_project_level_in_db(pid, new_index, timestamp):
+                # Check if project reached Payment stage
+                project_levels = project.get("levels", [])
+                if (new_index >= 0 and new_index < len(project_levels) and 
+                    project_levels[new_index] == "Payment"):
+                    # Move project to completed for all team members
+                    project_name = project.get("name", "")
+                    team_members = project.get("team", [])
+                    moved_count = move_project_to_completed(project_name, team_members)
+                    if moved_count > 0:
+                        st.session_state[f"project_completed_message_{pid}"] = f"Project moved to completed for {moved_count} team member(s)!"
+                
                 st.session_state[f"edit_level_update_success_{pid}"] = True
         
         # Check for success message from previous level update
         if st.session_state.get(f"edit_level_update_success_{pid}", False):
             st.success("Project level updated!")
             st.session_state[f"edit_level_update_success_{pid}"] = False
+        
+        # Check for project completion message
+        if st.session_state.get(f"project_completed_message_{pid}", False):
+            st.success(st.session_state[f"project_completed_message_{pid}"])
+            st.session_state[f"project_completed_message_{pid}"] = False
             
-        render_level_checkboxes("edit", pid, int(project["level"]), project.get("timestamps", {}), project["levels"], on_change_edit)
+        render_level_checkboxes("edit", pid, int(project.get("level", -1)), project.get("timestamps", {}), project.get("levels", ["Initial", "Invoice", "Payment"]), on_change_edit)
 
         if st.button("💾 Save"):
             if due <= start:
@@ -560,7 +653,10 @@ def run():
                     "team": team,
                     "updated_at": datetime.now().isoformat(),
                     "created_by": st.session_state.get("username", "unknown"),
-                    "created_at": project.get("created_at", datetime.now().isoformat())
+                    "created_at": project.get("created_at", datetime.now().isoformat()),
+                    "levels": project.get("levels", ["Initial", "Invoice", "Payment"]),
+                    "level": project.get("level", -1),
+                    "timestamps": project.get("timestamps", {})
                 }
                 
                 if update_project_in_db(pid, updated_project):

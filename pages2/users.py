@@ -34,10 +34,31 @@ def run():
 
     # 📝 Update team member details
     def update_member(original_email, updated_data):
+        # Get the current member data to compare projects
+        current_member = collection.find_one({"email": original_email})
+        current_projects = current_member.get("project", []) if current_member else []
+        new_projects = updated_data.get("project", [])
+        
+        # Find removed projects
+        removed_projects = [proj for proj in current_projects if proj not in new_projects]
+        
+        # Update the user document
         collection.update_one(
             {"email": original_email},
             {"$set": updated_data}
         )
+        
+        # Remove user from projects table for removed projects
+        if removed_projects:
+            projects_collection = db["projects"]
+            username = original_email.split("@")[0]  # Extract username from email
+            
+            for project_name in removed_projects:
+                # Remove the user from the project's user list
+                projects_collection.update_one(
+                    {"project_name": project_name},
+                    {"$pull": {"users": username}}
+                )
 
     # Session state
     if "selected_member" not in st.session_state:
@@ -50,28 +71,6 @@ def run():
     def go_back():
         st.session_state.selected_member = None
         st.session_state.edit_mode = False
-
-    def save_edits(name, email, role, branch, projects):
-        update_member(
-            st.session_state.selected_member["email"],
-            {
-                "name": name,
-                "email": email,
-                "role": role,
-                "branch": branch,
-                "project": projects
-            }
-        )
-        st.session_state.selected_member = {
-            "name": name,
-            "email": email,
-            "role": role,
-            "branch": branch,
-            "project": projects
-        }
-        st.success("✅ Profile updated successfully!")
-        st.session_state.edit_mode = False
-
 
     def display_profile(username, w):
         collection2 = db["documents"]
@@ -95,7 +94,6 @@ def run():
             """,
             unsafe_allow_html=True,
              )
-
 
 
     # 📋 Profile Page
@@ -132,7 +130,27 @@ def run():
 
                 submitted = st.form_submit_button("💾 Save Projects")
                 if submitted:
+                    # Get current projects before update to track changes
+                    current_projects = member.get("project", [])
+                    
+                    # Update member with new projects
                     update_member(member["email"], {"project": projects})
+                    
+                    # Also add user to newly assigned projects in projects table
+                    projects_collection = db["projects"]
+                    username = member["email"].split("@")[0]
+                    
+                    # Find newly added projects
+                    new_projects = [proj for proj in projects if proj not in current_projects]
+                    
+                    # Add user to new projects
+                    for project_name in new_projects:
+                        projects_collection.update_one(
+                            {"project_name": project_name},
+                            {"$addToSet": {"users": username}},  # $addToSet prevents duplicates
+                            upsert=True  # Create project document if it doesn't exist
+                        )
+                    
                     st.success("✅ Projects updated successfully!")
                     st.session_state.selected_member["project"] = projects
                     st.session_state.edit_mode = False
@@ -141,7 +159,18 @@ def run():
             st.markdown(f"**Email:** {member['email']}")
             st.markdown(f"**Role:** {member['position']}")
             st.markdown(f"**Branch:** {member['branch']}")
-            st.markdown("**Projects:** " + ", ".join(member.get("project", [])))
+            projects = member.get("project", [])
+            if isinstance(projects, list):
+                    project_str = ", ".join(projects) if projects else "None"
+            else:
+                    project_str = projects  # fallback if it's not a list
+            st.write(f"**Current Projects:** {project_str}")            
+            completed_projects = member.get("completed_projects", [])
+            if isinstance(completed_projects, list):
+                completed_project_str = ", ".join(completed_projects) if completed_projects else "None"
+            else:
+                completed_project_str = projects  # fallback if it's not a list
+            st.write(f"**Completed Projects:** {completed_project_str}")
 
             if st.button("✏️ Edit Profile"):
                 st.session_state.edit_mode = True

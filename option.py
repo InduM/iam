@@ -70,6 +70,13 @@ else:
                 icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","box-arrow-right"],
                 default_index=0
             )
+    # Detect tab switch and trigger rerun for fresh data
+    if "last_selected" not in st.session_state:
+        st.session_state.last_selected = selected
+
+    if selected != st.session_state.last_selected:
+        st.session_state.last_selected = selected
+        st.rerun()
 
     if selected == "Logout":
         st.session_state.authenticated = False
