@@ -31,8 +31,10 @@ def run():
             username = st.session_state.get("username", "")
 
             if role == "manager":
-                query = {"created_by": username}
+                # Managers can see clients created by themselves and by admins
+                query = {"$or": [{"created_by": username}, {"created_by": {"$regex": "admin", "$options": "i"}}]}
             else:
+                # Admins and other roles can see all clients
                 query = {}
 
             clients = list(clients_collection.find(query))

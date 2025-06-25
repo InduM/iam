@@ -83,7 +83,7 @@ def run():
 
     col1, col2, col3 = st.columns([5, 1, 2])
     with col1:
-        selected_date = st.date_input("", value=default_date, key="selected_date", label_visibility="collapsed")
+        selected_date = st.date_input("Select Date", value=default_date, key="selected_date", label_visibility="collapsed")
         can_add_log = start_of_prev_week <= selected_date <= end_of_week
 
     with col2:
@@ -142,13 +142,13 @@ def run():
 
                     if col == "Time":
                         log_time = datetime.strptime(log[col], "%H:%M").time() if isinstance(log[col], str) else log.get(col, datetime.now().time())
-                        new_time = st.time_input("", value=log_time, key=key, label_visibility="collapsed")
+                        new_time = st.time_input(f"Time for row {i+1}", value=log_time, key=key, label_visibility="collapsed")
                         log[col] = new_time.strftime("%H:%M")
 
                     elif col == "Priority":
                         options = ["Low", "Medium", "High"]
                         current_index = options.index(log[col]) if log[col] in options else 0
-                        log[col] = st.selectbox("", options=options, index=current_index, key=key, label_visibility="collapsed")
+                        log[col] = st.selectbox(f"Priority for row {i+1}", options=options, index=current_index, key=key, label_visibility="collapsed")
 
                     elif col == "Category":
                         options = [
@@ -157,9 +157,9 @@ def run():
                             "Sessions-Sensitization", "Sessions-Awareness", "Recruitment", "Other"
                         ]
                         current_index = options.index(log[col]) if log[col] in options else 0
-                        log[col] = st.selectbox("", options=options, index=current_index, key=key, label_visibility="collapsed")
+                        log[col] = st.selectbox(f"Category for row {i+1}", options=options, index=current_index, key=key, label_visibility="collapsed")
                         if log[col] == "Other":
-                            custom = st.text_input("Specify Other", label_visibility="collapsed", key=key + "_custom")
+                            custom = st.text_input(f"Specify Other Category for row {i+1}", label_visibility="collapsed", key=key + "_custom")
                             log[col] = custom
 
                     elif col == "Client Name":
@@ -170,7 +170,7 @@ def run():
                         except ValueError:
                             current_index = 0
                         
-                        selected_client = st.selectbox("", options=client_options, index=current_index, key=key, label_visibility="collapsed")
+                        selected_client = st.selectbox(f"Client Name for row {i+1}", options=client_options, index=current_index, key=key, label_visibility="collapsed")
                         log[col] = selected_client
 
                     elif col == "Project Name":
@@ -181,11 +181,11 @@ def run():
                         except ValueError:
                             current_index = 0
                         
-                        selected_project = st.selectbox("", options=project_options, index=current_index, key=key, label_visibility="collapsed")
+                        selected_project = st.selectbox(f"Project Name for row {i+1}", options=project_options, index=current_index, key=key, label_visibility="collapsed")
                         log[col] = selected_project
 
                     else:
-                        log[col] = st.text_area("", value=log[col], key=key, label_visibility="collapsed")
+                        log[col] = st.text_area(f"{col} for row {i+1}", value=log[col], key=key, label_visibility="collapsed")
 
                     st.markdown("</div>", unsafe_allow_html=True)
 

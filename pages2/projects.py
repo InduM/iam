@@ -680,7 +680,8 @@ def run():
                     "dueDate": due.isoformat(),
                     "team": team,
                     "updated_at": datetime.now().isoformat(),
-                    "created_by": st.session_state.get("username", "unknown"),
+                    #"created_by": st.session_state.get("username", "unknown"),#The "Manager/Lead" is set at creation.
+                    #It won't change even if someone else edits the project later.
                     "created_at": project.get("created_at", datetime.now().isoformat()),
                     "levels": project.get("levels", ["Initial", "Invoice", "Payment"]),
                     "level": project.get("level", -1),
