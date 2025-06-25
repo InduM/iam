@@ -22,6 +22,7 @@ def run():
             "Priority": "",
             "Description": "",
             "Category": "",
+            "Status": "",
             "Follow up": ""
         }
 
@@ -32,7 +33,7 @@ def run():
     username = st.session_state["username"]
     log_columns = [
         ("Time", 200), ("Project Name", 200), ("Client Name", 200), ("Priority", 200),
-        ("Description", 200), ("Category", 300), ("Follow up", 300)
+        ("Description", 200), ("Category", 300), ("Status", 150), ("Follow up", 300)
     ]
     user_doc = users_collection.find_one({"username": username})
     assigned_projects = user_doc.get("project", []) if user_doc else []
@@ -93,7 +94,15 @@ def run():
         def refresh_logs():
             with st.spinner("Refreshing logs..."):
                 query = {"Date": selected_date.strftime("%Y-%m-%d"), "Username": username}
-                st.session_state.logs = list(logs_collection.find(query, {"_id": 0, "Date": 0, "Username": 0}))
+                fetched_logs = list(logs_collection.find(query, {"_id": 0, "Date": 0, "Username": 0}))
+                st.session_state.logs = []
+                for log in fetched_logs:
+                    # Ensure all required fields exist with default values
+                    default_log = create_default_log()
+                    for key in default_log:
+                        if key not in log:
+                            log[key] = default_log[key]
+                    st.session_state.logs.append(log)
                 if not st.session_state.logs:
                     st.session_state.logs.append(create_default_log())
                 st.session_state.last_selected_date = selected_date
@@ -110,6 +119,11 @@ def run():
         st.session_state.logs = []
         query = {"Date": selected_date_str, "Username": username}
         for log in logs_collection.find(query, {"_id": 0, "Date": 0, "Username": 0}):
+            # Ensure all required fields exist with default values
+            default_log = create_default_log()
+            for key in default_log:
+                if key not in log:
+                    log[key] = default_log[key]
             st.session_state.logs.append(log)
         if not st.session_state.logs:
             st.session_state.logs.append(create_default_log())
@@ -134,6 +148,12 @@ def run():
         header_cols[-1].markdown("<div class='column-header'>Action</div>", unsafe_allow_html=True)
 
         for i, log in enumerate(st.session_state.logs):
+            # Ensure all required fields exist with default values
+            default_log = create_default_log()
+            for key in default_log:
+                if key not in log:
+                    log[key] = default_log[key]
+            
             row_cols = st.columns([w for _, w in log_columns] + [50])
             for j, (col, _) in enumerate(log_columns):
                 key = f"{col}_{i}"
@@ -161,6 +181,14 @@ def run():
                         if log[col] == "Other":
                             custom = st.text_input(f"Specify Other Category for row {i+1}", label_visibility="collapsed", key=key + "_custom")
                             log[col] = custom
+
+                    elif col == "Status":
+                        options = ["", "Completed", "InProgress", "Incomplete"]
+                        try:
+                            current_index = options.index(log[col]) if log[col] in options else 0
+                        except ValueError:
+                            current_index = 0
+                        log[col] = st.selectbox(f"Status for row {i+1}", options=options, index=current_index, key=key, label_visibility="collapsed")
 
                     elif col == "Client Name":
                         # Create dropdown with client names from MongoDB
