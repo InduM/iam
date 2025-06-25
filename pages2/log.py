@@ -40,17 +40,37 @@ def run():
     if isinstance(assigned_projects, str):
         assigned_projects = [assigned_projects]
 
-    # ✅ Fetch client names from MongoDB
+    # ✅ Fetch client names and details from MongoDB
     @st.cache_data(ttl=300)  # Cache for 5 minutes to improve performance
-    def get_client_names():
+    def get_client_data():
         try:
-            # Assuming clients collection has documents with a "name" field
-            clients = list(clients_collection.find({}, {"name": 1, "_id": 0}))
-            client_names = [client.get("name", "") for client in clients if client.get("name")]
-            return sorted(client_names)  # Sort alphabetically
+            # Fetch clients with all necessary fields
+            clients = list(clients_collection.find({}, {
+                "client_name": 1, 
+                "spoc_name": 1, 
+                "spoc_email": 1, 
+                "spoc_phone": 1, 
+                "_id": 0
+            }))
+            
+            # Create a dictionary for easy lookup
+            client_dict = {}
+            client_names = []
+            
+            for client in clients:
+                if client.get("client_name"):
+                    client_name = client.get("client_name", "")
+                    client_names.append(client_name)
+                    client_dict[client_name] = {
+                        "spoc_name": client.get("spoc_name", ""),
+                        "spoc_email": client.get("spoc_email", ""),
+                        "spoc_phone": client.get("spoc_phone", "")
+                    }
+            
+            return sorted(client_names), client_dict
         except Exception as e:
             st.error(f"Error fetching clients: {e}")
-            return []
+            return [], {}
 
     # ✅ Get user's assigned projects
     def get_user_projects():
@@ -64,7 +84,7 @@ def run():
             st.error(f"Error getting user projects: {e}")
             return []
 
-    client_names = get_client_names()
+    client_names, client_dict = get_client_data()
     user_projects = get_user_projects()
 
     # ✅ Session state setup
@@ -138,11 +158,17 @@ def run():
         })
         del st.session_state.logs[index]
 
+    # ✅ Initialize session state for tracking client selections
+    if "client_selections" not in st.session_state:
+        st.session_state.client_selections = {}
+
     # ✅ Log table
     with st.container():
         st.markdown('<div class="scroll-container"><div class="block-container">', unsafe_allow_html=True)
         for i, log in enumerate(st.session_state.logs):
-                with st.expander(f"Log Entry {i+1}", expanded=True):
+                log["Time"] = datetime.now().strftime("%H:%M")
+                summary = f"{log.get('Time', '--')} | {log.get('Project Name', 'No Project')} | {log.get('Status', '') or 'No Status'}"
+                with st.expander(f"Log Entry {i+1} — {summary}", expanded=True):
                     col_left, col_right = st.columns(2)
 
                     def render_input(col_widget, field, widget_key):
@@ -178,7 +204,27 @@ def run():
                         elif field == "Client Name":
                             options = [""] + client_names
                             idx = options.index(log[field]) if log[field] in options else 0
-                            log[field] = col_widget.selectbox("Client Name", options=options, index=idx, key=widget_key)
+                            selected_client = col_widget.selectbox("Client Name", options=options, index=idx, key=widget_key, on_change=None)
+                            log[field] = selected_client
+                            
+                            # Display SPOC information immediately when client is selected
+                            if selected_client and selected_client in client_dict:
+                                client_info = client_dict[selected_client]
+                                spoc_name = client_info.get("spoc_name", "")
+                                spoc_email = client_info.get("email", "")
+                                spoc_phone = client_info.get("phone_number", "")
+                                
+                                if spoc_name or spoc_email or spoc_phone:
+                                    print(spoc_name, spoc_email, spoc_phone)
+                                    col_widget.markdown("**📞 SPOC Details:**")
+                                    if spoc_name:
+                                        col_widget.info(f"**👤 Name:** {spoc_name}")
+                                    if spoc_email:
+                                        col_widget.info(f"**📧 Email:** {spoc_email}")
+                                    if spoc_phone:
+                                        col_widget.info(f"**📱 Phone:** {spoc_phone}")
+                                else:
+                                    col_widget.warning("⚠️ No SPOC information available for this client")
 
                         elif field == "Project Name":
                             options = [""] + user_projects
@@ -190,6 +236,8 @@ def run():
 
                     # Split fields between columns
                     for j, (field, _) in enumerate(log_columns):
+                        if field == "Time":
+                            continue  # Hide from UI but keep in DB
                         target_col = col_left if j % 2 == 0 else col_right
                         render_input(target_col, field, f"{field}_{i}")
 

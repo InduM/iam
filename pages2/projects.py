@@ -19,7 +19,7 @@ def run():
     clients_collection = db["clients"]
 
     def get_all_clients():
-        return [c["name"] for c in clients_collection.find({}, {"name": 1}) if "name" in c]
+        return [c["client_name"] for c in clients_collection.find({}, {"client_name": 1}) if "client_name" in c]
 
 
     # ───── Database Operations ─────

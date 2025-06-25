@@ -247,7 +247,7 @@ def run():
         team_data = load_team_data()
         current_role = st.session_state.get("role")
         if current_role == "manager":
-            team_data = [member for member in team_data if member.get("role") == "user"]
+            team_data = [member for member in team_data if member.get("role") != "admin"]
         df = pd.DataFrame(team_data)
 
         # --- Add refresh button for team data ---

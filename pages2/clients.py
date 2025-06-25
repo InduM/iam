@@ -63,8 +63,8 @@ def run():
                 st.error("Client not found.")
                 return False
             
-            old_name = old_client.get("name", "")
-            new_name = data.get("name", "")
+            old_name = old_client.get("client_name", "")
+            new_name = data.get("client_name", "")
             
             # Update the client
             result = clients_collection.update_one({"_id": object_id}, {"$set": data})
@@ -74,8 +74,8 @@ def run():
                 try:
                     # Update all projects that reference this client
                     projects_update_result = projects_collection.update_many(
-                        {"client": old_name},
-                        {"$set": {"client": new_name}}
+                        {"client_name": old_name},
+                        {"$set": {"client_name": new_name}}
                     )
                     
                     if projects_update_result.modified_count > 0:
@@ -95,10 +95,10 @@ def run():
             # Get client name before deletion to check for related projects
             client_to_delete = clients_collection.find_one({"_id": object_id})
             if client_to_delete:
-                client_name = client_to_delete.get("name", "")
+                client_name = client_to_delete.get("client_name", "")
                 
                 # Check if there are any projects using this client
-                related_projects = projects_collection.count_documents({"client": client_name})
+                related_projects = projects_collection.count_documents({"client_name": client_name})
                 if related_projects > 0:
                     st.error(f"Cannot delete client. There are {related_projects} project(s) associated with this client. Please delete or reassign those projects first.")
                     return False
@@ -122,30 +122,34 @@ def run():
                 st.rerun()
 
         # Search Filter
-        search_query = st.text_input("🔍 Search", placeholder="Name, Email, or Company")
+        search_query = st.text_input("🔍 Search", placeholder="Name, Email, Company, SPOC, or Phone")
 
         clients = load_clients()
 
         if search_query:
             q = search_query.lower()
             clients = [c for c in clients if
-                    q in c.get("name", "").lower() or
+                    q in c.get("client_name", "").lower() or
                     q in c.get("email", "").lower() or
-                    q in c.get("company", "").lower()]
+                    q in c.get("company", "").lower() or
+                    q in c.get("spoc_name", "").lower() or
+                    q in c.get("phone_number", "").lower()]
 
         for client in clients:
             cid = client["id"]
-            client_name = client.get('name', 'Unnamed')
+            client_name = client.get('client_name', 'Unnamed')
             
             # Count related projects for this client
             try:
-                project_count = projects_collection.count_documents({"client": client_name})
+                project_count = projects_collection.count_documents({"client_name": client_name})
                 project_info = f" ({project_count} project{'s' if project_count != 1 else ''})"
             except:
                 project_info = ""
             
             with st.expander(f"{client_name} – {client.get('company', '-')}{project_info}"):
                 st.markdown(f"**Email:** {client.get('email', '-')}")
+                st.markdown(f"**SPOC Name:** {client.get('spoc_name', '-')}")
+                st.markdown(f"**Phone Number:** {client.get('phone_number', '-')}")
                 st.markdown(f"**Created By:** {client.get('created_by', '-')}")
                 st.markdown(f"**Created At:** {client.get('created_at', '-')}")
                 if project_count > 0:
@@ -177,6 +181,7 @@ def run():
                         st.rerun()
 
     def show_create_form():
+        st.title("➕ Create Client")
         if st.button("← Back"):
             st.session_state.client_view = "dashboard"
             st.rerun()
@@ -196,7 +201,7 @@ def run():
                     "created_by": st.session_state.get("username", "unknown"),
                     "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
-                existing = clients_collection.find_one({"name": name})
+                existing = clients_collection.find_one({"client_name": name})
                 if existing:
                     st.error("A client with this name already exists.")
                 elif save_client(client_data):
@@ -217,29 +222,33 @@ def run():
             return
 
         # Show current client name and related projects count
-        current_name = client.get("name", "")
+        current_name = client.get("client_name", "")
         try:
-            project_count = projects_collection.count_documents({"client": current_name})
+            project_count = projects_collection.count_documents({"client_name": current_name})
             if project_count > 0:
                 st.info(f"⚠️ This client has {project_count} associated project(s). Changing the name will update all related projects.")
         except:
             pass
 
-        name = st.text_input("Name", value=client.get("name", ""))
+        name = st.text_input("Name", value=client.get("client_name", ""))
         email = st.text_input("Email", value=client.get("email", ""))
         company = st.text_input("Company", value=client.get("company", ""))
+        spoc_name = st.text_input("SPOC Name", value=client.get("spoc_name", ""))
+        phone_number = st.text_input("Phone Number", value=client.get("phone_number", ""))
 
         if st.button("💾 Save"):
             if not name or not email or not company:
-                st.error("All fields are required.")
+                st.error("Name, Email, and Company are required fields.")
             else:
                 updated = {
-                    "name": name,
+                    "client_name": name,
                     "email": email,
                     "company": company,
+                    "spoc_name": spoc_name,
+                    "phone_number": phone_number,
                     "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
-                existing = clients_collection.find_one({"name": name, "_id": {"$ne": ObjectId(cid)}})
+                existing = clients_collection.find_one({"client_name": name, "_id": {"$ne": ObjectId(cid)}})
                 if existing:
                     st.error("A client with this name already exists.")
                 elif update_client(cid, updated):
