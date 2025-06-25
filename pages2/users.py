@@ -17,6 +17,7 @@ def run():
     @st.cache_resource
     def get_logs_collection():
         return db["logs"]
+    
     collection = get_mongo_collection()
 
     # 🔄 Load and normalize team data
@@ -31,6 +32,31 @@ def run():
             else:
                 d["project"] = []
         return data
+
+    # 🔄 Fetch fresh user data from MongoDB
+    def fetch_user_data(email):
+        """Fetch the latest user data from MongoDB by email"""
+        user_data = collection.find_one({"email": email}, {"_id": 0})
+        if user_data:
+            # Normalize project field
+            proj = user_data.get("project")
+            if isinstance(proj, list):
+                pass  # Already a list
+            elif isinstance(proj, str):
+                user_data["project"] = [proj]
+            else:
+                user_data["project"] = []
+        return user_data
+
+    # 🔄 Fetch fresh logs from MongoDB
+    def fetch_user_logs(username, date_str):
+        """Fetch the latest logs for a user on a specific date"""
+        logs_collection = get_logs_collection()
+        logs = list(logs_collection.find(
+            {"Date": date_str, "Username": username},
+            {"_id": 0, "Date": 0, "Username": 0}
+        ))
+        return logs
 
     # 📝 Update team member details
     def update_member(original_email, updated_data):
@@ -61,15 +87,14 @@ def run():
                 )
 
     # Session state
-    if "selected_member" not in st.session_state:
-        st.session_state.selected_member = None
+    if "selected_member_email" not in st.session_state:
+        st.session_state.selected_member_email = None
     if "edit_mode" not in st.session_state:
         st.session_state.edit_mode = False
 
-
     # 🔙 Navigation helpers
     def go_back():
-        st.session_state.selected_member = None
+        st.session_state.selected_member_email = None
         st.session_state.edit_mode = False
 
     def display_profile(username, w):
@@ -95,9 +120,17 @@ def run():
             unsafe_allow_html=True,
              )
 
-
     # 📋 Profile Page
-    def show_profile(member):
+    def show_profile(member_email):
+        # 🔄 Fetch fresh user data from MongoDB
+        member = fetch_user_data(member_email)
+        
+        if not member:
+            st.error("❌ User not found in database")
+            go_back()
+            st.rerun()
+            return
+
         col1, col2 = st.columns([1, 8])  # Narrow left column for back arrow
         with col1:
             if st.button("←", key="back_arrow"):
@@ -152,7 +185,6 @@ def run():
                         )
                     
                     st.success("✅ Projects updated successfully!")
-                    st.session_state.selected_member["project"] = projects
                     st.session_state.edit_mode = False
                     st.rerun()
         else:
@@ -184,8 +216,6 @@ def run():
 
             # 🔍 Show Everyday Log if current user is a manager or admin
             if st.session_state.get("role") in ["manager", "admin"]:
-                logs_collection = get_logs_collection()
-
                 # ✅ Date selector
                 selected_log_date = st.date_input("📅 Select a date to view logs", value=date.today(), key="log_view_date")
 
@@ -197,10 +227,9 @@ def run():
                     return
 
                 query_username = email.split("@")[0]
-                logs = list(logs_collection.find(
-                    {"Date": query_date_str, "Username": query_username},
-                    {"_id": 0, "Date": 0, "Username": 0}
-                ))
+                
+                # 🔄 Fetch fresh logs from MongoDB
+                logs = fetch_user_logs(query_username, query_date_str)
 
                 if logs:
                     import pandas as pd
@@ -209,6 +238,9 @@ def run():
                 else:
                     st.info("No logs found for this date.")
 
+                # Add refresh button for logs
+                if st.button("🔄 Refresh Logs", key="refresh_logs"):
+                    st.rerun()
 
     # 👥 Team View Page
     def show_team():
@@ -217,6 +249,13 @@ def run():
         if current_role == "manager":
             team_data = [member for member in team_data if member.get("role") == "user"]
         df = pd.DataFrame(team_data)
+
+        # --- Add refresh button for team data ---
+        col_refresh, col_spacer = st.columns([1, 4])
+        with col_refresh:
+            if st.button("🔄 Refresh Team Data"):
+                # Clear any caching if needed and reload
+                st.rerun()
 
         # --- Filters ---
         col1, col2 = st.columns(2)
@@ -263,11 +302,12 @@ def run():
                     name = str(member.get("name", "Unnamed"))
                     email = str(member.get("email", f"key_{name}"))
                     if st.button(name, key=email):
-                        st.session_state.selected_member = member.to_dict()
+                        # Store only the email instead of the entire member object
+                        st.session_state.selected_member_email = email
                         st.rerun()
 
     # 🚦 Routing
-    if st.session_state.selected_member:
-        show_profile(st.session_state.selected_member)
+    if st.session_state.selected_member_email:
+        show_profile(st.session_state.selected_member_email)
     else:
         show_team()

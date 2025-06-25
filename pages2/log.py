@@ -141,87 +141,59 @@ def run():
     # ✅ Log table
     with st.container():
         st.markdown('<div class="scroll-container"><div class="block-container">', unsafe_allow_html=True)
-
-        header_cols = st.columns([w for _, w in log_columns] + [80])
-        for i, (col_name, _) in enumerate(log_columns):
-            header_cols[i].markdown(f"<div class='column-header'>{col_name}</div>", unsafe_allow_html=True)
-        header_cols[-1].markdown("<div class='column-header'>Action</div>", unsafe_allow_html=True)
-
         for i, log in enumerate(st.session_state.logs):
-            # Ensure all required fields exist with default values
-            default_log = create_default_log()
-            for key in default_log:
-                if key not in log:
-                    log[key] = default_log[key]
-            
-            row_cols = st.columns([w for _, w in log_columns] + [50])
-            for j, (col, _) in enumerate(log_columns):
-                key = f"{col}_{i}"
-                with row_cols[j]:
-                    st.markdown("<div class='column-input'>", unsafe_allow_html=True)
+                with st.expander(f"Log Entry {i+1}", expanded=True):
+                    col_left, col_right = st.columns(2)
 
-                    if col == "Time":
-                        log_time = datetime.strptime(log[col], "%H:%M").time() if isinstance(log[col], str) else log.get(col, datetime.now().time())
-                        new_time = st.time_input(f"Time for row {i+1}", value=log_time, key=key, label_visibility="collapsed")
-                        log[col] = new_time.strftime("%H:%M")
+                    def render_input(col_widget, field, widget_key):
+                        if field == "Time":
+                            log_time = datetime.strptime(log[field], "%H:%M").time() if isinstance(log[field], str) else log.get(field, datetime.now().time())
+                            new_time = col_widget.time_input("Time", value=log_time, key=widget_key)
+                            log[field] = new_time.strftime("%H:%M")
 
-                    elif col == "Priority":
-                        options = ["Low", "Medium", "High"]
-                        current_index = options.index(log[col]) if log[col] in options else 0
-                        log[col] = st.selectbox(f"Priority for row {i+1}", options=options, index=current_index, key=key, label_visibility="collapsed")
+                        elif field == "Priority":
+                            options = ["Low", "Medium", "High"]
+                            idx = options.index(log[field]) if log[field] in options else 0
+                            log[field] = col_widget.selectbox("Priority", options=options, index=idx, key=widget_key)
 
-                    elif col == "Category":
-                        options = [
-                            "Audit-Physical", "Audit-Digital", "Audit-Design", "Audit-Accessibility",
-                            "Audit-Policy", "Training-Onwards", "Training-Regular", "Sessions-Kiosk",
-                            "Sessions-Sensitization", "Sessions-Awareness", "Recruitment", "Other"
-                        ]
-                        current_index = options.index(log[col]) if log[col] in options else 0
-                        log[col] = st.selectbox(f"Category for row {i+1}", options=options, index=current_index, key=key, label_visibility="collapsed")
-                        if log[col] == "Other":
-                            custom = st.text_input(f"Specify Other Category for row {i+1}", label_visibility="collapsed", key=key + "_custom")
-                            log[col] = custom
+                        elif field == "Category":
+                            options = [
+                                "Audit-Physical", "Audit-Digital", "Audit-Design", "Audit-Accessibility",
+                                "Audit-Policy", "Training-Onwards", "Training-Regular", "Sessions-Kiosk",
+                                "Sessions-Sensitization", "Sessions-Awareness", "Recruitment", "Other"
+                            ]
+                            idx = options.index(log[field]) if log[field] in options else 0
+                            selected = col_widget.selectbox("Category", options=options, index=idx, key=widget_key)
+                            if selected == "Other":
+                                custom = col_widget.text_input("Specify Other Category", key=widget_key + "_custom")
+                                log[field] = custom
+                            else:
+                                log[field] = selected
 
-                    elif col == "Status":
-                        options = ["", "Completed", "InProgress", "Incomplete"]
-                        try:
-                            current_index = options.index(log[col]) if log[col] in options else 0
-                        except ValueError:
-                            current_index = 0
-                        log[col] = st.selectbox(f"Status for row {i+1}", options=options, index=current_index, key=key, label_visibility="collapsed")
+                        elif field == "Status":
+                            options = ["", "Completed", "InProgress", "Incomplete"]
+                            idx = options.index(log[field]) if log[field] in options else 0
+                            log[field] = col_widget.selectbox("Status", options=options, index=idx, key=widget_key)
 
-                    elif col == "Client Name":
-                        # Create dropdown with client names from MongoDB
-                        client_options = [""] + client_names  # Add empty option at the beginning
-                        try:
-                            current_index = client_options.index(log[col]) if log[col] in client_options else 0
-                        except ValueError:
-                            current_index = 0
-                        
-                        selected_client = st.selectbox(f"Client Name for row {i+1}", options=client_options, index=current_index, key=key, label_visibility="collapsed")
-                        log[col] = selected_client
+                        elif field == "Client Name":
+                            options = [""] + client_names
+                            idx = options.index(log[field]) if log[field] in options else 0
+                            log[field] = col_widget.selectbox("Client Name", options=options, index=idx, key=widget_key)
 
-                    elif col == "Project Name":
-                        # Create dropdown with user's assigned projects
-                        project_options = [""] + user_projects  # Add empty option at the beginning
-                        try:
-                            current_index = project_options.index(log[col]) if log[col] in project_options else 0
-                        except ValueError:
-                            current_index = 0
-                        
-                        selected_project = st.selectbox(f"Project Name for row {i+1}", options=project_options, index=current_index, key=key, label_visibility="collapsed")
-                        log[col] = selected_project
+                        elif field == "Project Name":
+                            options = [""] + user_projects
+                            idx = options.index(log[field]) if log[field] in options else 0
+                            log[field] = col_widget.selectbox("Project Name", options=options, index=idx, key=widget_key)
 
-                    else:
-                        log[col] = st.text_area(f"{col} for row {i+1}", value=log[col], key=key, label_visibility="collapsed")
+                        else:
+                            log[field] = col_widget.text_area(field, value=log[field], key=widget_key)
 
-                    st.markdown("</div>", unsafe_allow_html=True)
+                    # Split fields between columns
+                    for j, (field, _) in enumerate(log_columns):
+                        target_col = col_left if j % 2 == 0 else col_right
+                        render_input(target_col, field, f"{field}_{i}")
 
-            if row_cols[-1].button("🗑️", key=f"delete_{i}"):
-                delete_log_row(i)
-                st.rerun()
-
-        st.markdown('</div></div>', unsafe_allow_html=True)
+                    st.button("🗑️ Delete this log", key=f"delete_{i}", on_click=lambda idx=i: delete_log_row(idx))
 
     # ✅ Save logs
     if st.button("💾 Save"):
