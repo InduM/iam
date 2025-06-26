@@ -48,8 +48,8 @@ def run():
             clients = list(clients_collection.find({}, {
                 "client_name": 1, 
                 "spoc_name": 1, 
-                "spoc_email": 1, 
-                "spoc_phone": 1, 
+                "email": 1, 
+                "phone_number": 1, 
                 "_id": 0
             }))
             
@@ -63,8 +63,8 @@ def run():
                     client_names.append(client_name)
                     client_dict[client_name] = {
                         "spoc_name": client.get("spoc_name", ""),
-                        "spoc_email": client.get("spoc_email", ""),
-                        "spoc_phone": client.get("spoc_phone", "")
+                        "email": client.get("email", ""),
+                        "phone_number": client.get("phone_number", "")
                     }
             
             return sorted(client_names), client_dict
@@ -210,19 +210,23 @@ def run():
                             # Display SPOC information immediately when client is selected
                             if selected_client and selected_client in client_dict:
                                 client_info = client_dict[selected_client]
+                                print("CLIENT INFO: ",client_info)
                                 spoc_name = client_info.get("spoc_name", "")
                                 spoc_email = client_info.get("email", "")
                                 spoc_phone = client_info.get("phone_number", "")
                                 
                                 if spoc_name or spoc_email or spoc_phone:
                                     print(spoc_name, spoc_email, spoc_phone)
+                                    display_string=[]
                                     col_widget.markdown("**📞 SPOC Details:**")
                                     if spoc_name:
-                                        col_widget.info(f"**👤 Name:** {spoc_name}")
+                                        #col_widget.info(f"**👤 Name:** {spoc_name}")
+                                        display_string.append(f"**👤 Name:** {spoc_name}\n")
                                     if spoc_email:
-                                        col_widget.info(f"**📧 Email:** {spoc_email}")
+                                        display_string.append(f"**📧 Email:** {spoc_email}\n")
                                     if spoc_phone:
-                                        col_widget.info(f"**📱 Phone:** {spoc_phone}")
+                                        display_string.append(f"**📱 Phone:** {spoc_phone}")
+                                    col_widget.info('\n'.join(display_string))
                                 else:
                                     col_widget.warning("⚠️ No SPOC information available for this client")
 
