@@ -4,8 +4,18 @@ from datetime import datetime, date, timedelta
 from typing import List
 
 # Import functions from backend and utils
-from .backend import *
-from utils.utils_project import *
+from .backend import (
+    load_projects_from_db, save_project_to_db, update_project_in_db,
+    delete_project_from_db, update_project_level_in_db, get_all_clients,
+    update_client_project_count, get_team_members, move_project_to_completed,
+    update_project_name_in_user_profiles, remove_project_from_all_users,
+    update_users_with_project, remove_project_from_users, add_project_to_manager
+)
+from ..utils.utils_project import (
+    TEMPLATES, send_invoice_email, format_level, render_level_checkboxes,
+    initialize_session_state, get_current_timestamp, validate_project_dates,
+    ensure_project_defaults
+)
 
 def run():
     """Main function to run the project management interface"""
@@ -40,9 +50,6 @@ def show_dashboard():
         if st.button("🔄Refresh"):
             st.session_state.refresh_projects = True
             st.rerun()
-
-    # Show deadline alerts
-    _show_deadline_alerts()
 
     # Filters and search
     col1, col2, col3 = st.columns([3, 2, 2])
@@ -93,6 +100,8 @@ def show_create_form():
     start = st.date_input("Start Date")
     due = st.date_input("Due Date")
     
+    team_members = get_team_members(st.session_state.get("role", ""))
+    team = st.multiselect("Assign Team", team_members)
     
     # Handle template levels
     if st.session_state.selected_template:
@@ -105,29 +114,12 @@ def show_create_form():
     else:
         _render_custom_levels_editor()
     
-    team_members = get_team_members(st.session_state.get("role", ""))
-    # Stage Assignments Section
-    st.markdown("---")
-    stage_assignments = render_stage_assignments_editor(
-        st.session_state.custom_levels, 
-        team_members, 
-        st.session_state.get("stage_assignments", {})
-    )
-    st.session_state.stage_assignments = stage_assignments
-    
-    # Validate stage assignments
-    if stage_assignments:
-        assignment_issues = validate_stage_assignments(stage_assignments, st.session_state.custom_levels)
-        if assignment_issues:
-            for issue in assignment_issues:
-                st.warning(f"⚠️ {issue}")
-    
     # Progress section
     _render_progress_section("create")
     
     # Create button
     if st.button("✅ Create Project"):
-        _handle_create_project(name, client, description, start, due)
+        _handle_create_project(name, client, description, start, due, team)
 
 def show_edit_form():
     """Display the edit project form"""
@@ -163,43 +155,14 @@ def show_edit_form():
     start = st.date_input("Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
     due = st.date_input("Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
     
-    team_members = get_team_members(st.session_state.get("role", ""))    
-    # Stage Assignments Section
-    st.markdown("---")
-    current_stage_assignments = project.get("stage_assignments", {})
-    stage_assignments = render_stage_assignments_editor(
-        project.get("levels", ["Initial", "Invoice", "Payment"]), 
-        team_members, 
-        current_stage_assignments
-    )
-    
-    # Show current assignments summary
-    if current_stage_assignments:
-        st.info(f"Current assignments: {get_stage_assignment_summary(current_stage_assignments, project.get('levels', []))}")
-    
-    # Validate stage assignments
-    if stage_assignments:
-        assignment_issues = validate_stage_assignments(stage_assignments, project.get("levels", []))
-        if assignment_issues:
-            for issue in assignment_issues:
-                st.warning(f"⚠️ {issue}")
-    
-    # Show overdue stages
-    overdue_stages = get_overdue_stages(
-        current_stage_assignments, 
-        project.get("levels", []), 
-        project.get("level", -1)
-    )
-    if overdue_stages:
-        st.error("🔴 Overdue Stages:")
-        for overdue in overdue_stages:
-            st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue (Due: {overdue['deadline']})")
+    team_members = get_team_members(st.session_state.get("role", ""))
+    team = st.multiselect("Assign Team", team_members, default=project.get("team", []))
     
     # Progress section
     st.subheader("Progress")
     
     def on_change_edit(new_index):
-        _handle_level_change_edit(project, pid, new_index, current_stage_assignments)
+        _handle_level_change_edit(project, pid, new_index)
     
     # Check for success messages
     _check_edit_success_messages(pid)
@@ -207,51 +170,14 @@ def show_edit_form():
     render_level_checkboxes(
         "edit", pid, int(project.get("level", -1)), 
         project.get("timestamps", {}), project.get("levels", ["Initial", "Invoice", "Payment"]), 
-        on_change_edit, editable=True, stage_assignments=current_stage_assignments
+        on_change_edit
     )
     
     # Save button
     if st.button("💾 Save"):
-        _handle_save_project(pid, project, name, client, description, start, due, original_team, original_name, stage_assignments)
+        _handle_save_project(pid, project, name, client, description, start, due, team, original_team, original_name)
 
 # ───── Helper Functions ─────
-
-def _show_deadline_alerts():
-    """Show deadline alerts for all projects"""
-    all_overdue = []
-    all_upcoming = []
-    
-    for project in st.session_state.projects:
-        stage_assignments = project.get("stage_assignments", {})
-        levels = project.get("levels", [])
-        current_level = project.get("level", -1)
-        
-        # Get overdue stages
-        overdue = get_overdue_stages(stage_assignments, levels, current_level)
-        for item in overdue:
-            item['project_name'] = project.get("name", "Unnamed")
-            all_overdue.append(item)
-        
-        # Get upcoming deadlines
-        upcoming = get_upcoming_deadlines(stage_assignments, levels, days_ahead=7)
-        for item in upcoming:
-            item['project_name'] = project.get("name", "Unnamed")
-            all_upcoming.append(item)
-    
-    # Show alerts
-    if all_overdue:
-        st.error("🔴 **Overdue Stages:**")
-        for item in all_overdue[:5]:  # Show max 5
-            st.error(f"  • **{item['project_name']}** - {item['stage_name']}: {item['days_overdue']} days overdue")
-        if len(all_overdue) > 5:
-            st.error(f"  • ... and {len(all_overdue) - 5} more overdue stages")
-    
-    if all_upcoming:
-        for item in all_upcoming[:5]:  # Show max 5
-            days_text = "today" if item['days_until'] == 0 else f"in {item['days_until']} day(s)"
-            st.warning(f"  • **{item['project_name']}** - {item['stage_name']}: Due {days_text}")
-        if len(all_upcoming) > 5:
-            st.warning(f"  • ... and {len(all_upcoming) - 5} more upcoming deadlines")
 
 def _render_back_button():
     """Render back button with styling"""
@@ -316,32 +242,22 @@ def _render_project_card(project, index):
         st.markdown(f"**Start Date:** {project.get('startDate', '-')}")
         st.markdown(f"**Due Date:** {project.get('dueDate', '-')}")
         st.markdown(f"**Manager/Lead:** {project.get('created_by', '-')}")
+        st.markdown(f"**Team Assigned:** {', '.join(project.get('team', [])) or '-'}")
         
         levels = project.get("levels", ["Initial", "Invoice", "Payment"])
         current_level = project.get("level", -1)
         st.markdown(f"**Current Level:** {format_level(current_level, levels)}")
         
-        # Show stage assignments summary
-        stage_assignments = project.get("stage_assignments", {})
-        
-        # Show overdue stages for this project
-        overdue_stages = get_overdue_stages(stage_assignments, levels, current_level)
-        if overdue_stages:
-            st.error("🔴 **Overdue Stages:**")
-            for overdue in overdue_stages:
-                st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue")
-        
         # Level checkboxes
         def on_change_dashboard(new_index, proj_id=pid, proj=project):
-            _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments)
+            _handle_level_change_dashboard(proj_id, proj, new_index)
         
         # Check for success messages
         _check_dashboard_success_messages(pid)
         
         render_level_checkboxes(
             "view", pid, int(project.get("level", -1)), 
-            project.get("timestamps", {}), levels, on_change_dashboard, 
-            editable=True, stage_assignments=stage_assignments
+            project.get("timestamps", {}), levels, on_change_dashboard, editable=True
         )
         
         # Email reminder logic
@@ -386,7 +302,6 @@ def _render_progress_section(form_type):
     st.subheader("Progress")
     level_index = st.session_state.get("level_index", -1)
     level_timestamps = st.session_state.get("level_timestamps", {})
-    stage_assignments = st.session_state.get("stage_assignments", {})
     
     def on_change_create(new_index):
         st.session_state.level_index = new_index
@@ -394,11 +309,10 @@ def _render_progress_section(form_type):
     
     render_level_checkboxes(
         form_type, "new", level_index, level_timestamps, 
-        st.session_state.custom_levels, on_change_create, 
-        editable=True, stage_assignments=stage_assignments
+        st.session_state.custom_levels, on_change_create
     )
 
-def _handle_create_project(name, client, description, start, due):
+def _handle_create_project(name, client, description, start, due, team):
     """Handle project creation"""
     if not validate_project_dates(start, due):
         st.error("Cannot submit: Due date must be later than the start date.")
@@ -407,7 +321,7 @@ def _handle_create_project(name, client, description, start, due):
     elif _check_project_name_exists(name):
         st.error("A project with this name already exists. Please choose a different name.")
     else:
-        new_proj = _create_project_data(name, client, description, start, due)
+        new_proj = _create_project_data(name, client, description, start, due, team)
         
         project_id = save_project_to_db(new_proj)
         if project_id:
@@ -418,24 +332,23 @@ def _handle_create_project(name, client, description, start, due):
             # Update client project count
             update_client_project_count(client)
             
-            # Send stage assignment notifications
-            _send_stage_assignment_notifications(new_proj)
-            
             # Reset form state and navigate back
             _reset_create_form_state()
             
+            # Update user profiles
+            update_users_with_project(team, name)
             add_project_to_manager(st.session_state.get("username", ""), name)
             
             st.rerun()
 
-def _handle_save_project(pid, project, name, client, description, start, due, original_team, original_name, stage_assignments):
+def _handle_save_project(pid, project, name, client, description, start, due, team, original_team, original_name):
     """Handle project save"""
     if not validate_project_dates(start, due):
         st.error("Cannot save: Due date must be later than the start date.")
     elif not name or not client:
         st.error("Name and client are required.")
     else:
-        updated_project = _create_updated_project_data(project, name, client, description, start, due, stage_assignments)
+        updated_project = _create_updated_project_data(project, name, client, description, start, due, team)
         
         if update_project_in_db(pid, updated_project):
             success_messages = []
@@ -449,12 +362,8 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
                 if updated_count > 0:
                     success_messages.append(f"Project name updated in {updated_count} user profiles!")
             
-            
-            # Handle stage assignment changes
-            old_assignments = project.get("stage_assignments", {})
-            if stage_assignments != old_assignments:
-                success_messages.append("Stage assignments updated!")
-                _send_stage_assignment_change_notifications(stage_assignments, old_assignments, name)
+            # Handle team changes
+            success_messages.extend(_handle_team_changes(team, original_team, name))
             
             project.update(updated_project)
             
@@ -464,7 +373,7 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
             st.session_state.view = "dashboard"
             st.rerun()
 
-def _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments):
+def _handle_level_change_dashboard(proj_id, proj, new_index):
     """Handle level change in dashboard view"""
     timestamp = get_current_timestamp()
     if update_project_level_in_db(proj_id, new_index, timestamp):
@@ -473,16 +382,12 @@ def _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments):
             proj["timestamps"] = {}
         proj["timestamps"][str(new_index)] = timestamp
         
-        # Notify assigned members for the new stage
-        if stage_assignments:
-            notify_assigned_members(stage_assignments, proj.get("name", ""), new_index)
-        
         # Check if project reached Payment stage
         _check_project_completion(proj, proj_id)
         
         st.session_state[f"level_update_success_{proj_id}"] = True
 
-def _handle_level_change_edit(project, pid, new_index, stage_assignments):
+def _handle_level_change_edit(project, pid, new_index):
     """Handle level change in edit view"""
     timestamp = get_current_timestamp()
     project["level"] = new_index
@@ -490,44 +395,8 @@ def _handle_level_change_edit(project, pid, new_index, stage_assignments):
     
     # Update in database immediately
     if update_project_level_in_db(pid, new_index, timestamp):
-        # Notify assigned members for the new stage
-        if stage_assignments:
-            notify_assigned_members(stage_assignments, project.get("name", ""), new_index)
-            
         _check_project_completion(project, pid)
         st.session_state[f"edit_level_update_success_{pid}"] = True
-
-def _send_stage_assignment_notifications(project):
-    """Send notifications for stage assignments in new project"""
-    stage_assignments = project.get("stage_assignments", {})
-    project_name = project.get("name", "Unnamed")
-    
-    for stage_index, assignment in stage_assignments.items():
-        members = assignment.get("members", [])
-        deadline = assignment.get("deadline", "")
-        stage_name = assignment.get("stage_name", f"Stage {int(stage_index) + 1}")
-        
-        if members:
-            # In a real implementation, you'd get email addresses from user profiles
-            # For now, we'll use the send_stage_assignment_email function from utils
-            member_emails = [f"{member}@company.com" for member in members]  # Mock email addresses
-            send_stage_assignment_email(member_emails, project_name, stage_name, deadline)
-
-def _send_stage_assignment_change_notifications(new_assignments, old_assignments, project_name):
-    """Send notifications when stage assignments change"""
-    # Compare old and new assignments to find changes
-    for stage_index, assignment in new_assignments.items():
-        old_assignment = old_assignments.get(stage_index, {})
-        new_members = set(assignment.get("members", []))
-        old_members = set(old_assignment.get("members", []))
-        
-        # Find newly assigned members
-        newly_assigned = new_members - old_members
-        if newly_assigned:
-            deadline = assignment.get("deadline", "")
-            stage_name = assignment.get("stage_name", f"Stage {int(stage_index) + 1}")
-            member_emails = [f"{member}@company.com" for member in newly_assigned]
-            send_stage_assignment_email(member_emails, project_name, stage_name, deadline)
 
 def _check_project_completion(project, project_id):
     """Check if project has reached completion stage"""
@@ -629,7 +498,7 @@ def _check_project_name_exists(name):
     collections = get_db_collections()
     return collections["projects"].find_one({"name": name}) is not None
 
-def _create_project_data(name, client, description, start, due):
+def _create_project_data(name, client, description, start, due, team):
     """Create project data dictionary"""
     return {
         "name": name,
@@ -637,17 +506,17 @@ def _create_project_data(name, client, description, start, due):
         "description": description,
         "startDate": start.isoformat(),
         "dueDate": due.isoformat(),
+        "team": team,
         "template": st.session_state.selected_template or "Custom",
         "levels": st.session_state.custom_levels.copy(),
         "level": st.session_state.level_index,
         "timestamps": st.session_state.level_timestamps.copy(),
-        "stage_assignments": st.session_state.stage_assignments.copy(),
         "created_at": datetime.now().isoformat(),
         "updated_at": datetime.now().isoformat(),
         "created_by": st.session_state.get("username", "unknown"),
     }
 
-def _create_updated_project_data(project, name, client, description, start, due,stage_assignments):
+def _create_updated_project_data(project, name, client, description, start, due, team):
     """Create updated project data dictionary"""
     return {
         "name": name,
@@ -655,6 +524,7 @@ def _create_updated_project_data(project, name, client, description, start, due,
         "description": description,
         "startDate": start.isoformat(),
         "dueDate": due.isoformat(),
+        "team": team,
         "updated_at": datetime.now().isoformat(),
         "created_at": project.get("created_at", datetime.now().isoformat()),
         "levels": project.get("levels", ["Initial", "Invoice", "Payment"]),
@@ -679,6 +549,22 @@ def _update_client_counts_after_edit(project, new_client):
     old_client = project.get("client", "")
     if new_client != old_client:
         update_client_project_count(old_client)
+
+def _handle_team_changes(new_team, original_team, project_name):
+    """Handle team member changes and return success messages"""
+    success_messages = []
+    added_users = set(new_team) - set(original_team)
+    removed_users = set(original_team) - set(new_team)
+    
+    if added_users:
+        update_users_with_project(list(added_users), project_name)
+        success_messages.append(f"Project added to {len(added_users)} new team member(s): {', '.join(added_users)}")
+    
+    if removed_users:
+        remove_project_from_users(list(removed_users), [], project_name)
+        success_messages.append(f"Project removed from {len(removed_users)} former team member(s): {', '.join(removed_users)}")
+    
+    return success_messages
 
 def _display_success_messages(messages):
     """Display success messages"""

@@ -1,5 +1,5 @@
 import streamlit as st
-from utils import is_logged_in
+from utils.utils_login import is_logged_in
 import pymongo
 import base64
 

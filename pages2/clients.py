@@ -186,18 +186,26 @@ def run():
             st.session_state.client_view = "dashboard"
             st.rerun()
 
-        name = st.text_input("Name")
-        email = st.text_input("Email")
-        company = st.text_input("Company")
+        # Basic Information Section
+        st.subheader("📋 Basic Information")
+        name = st.text_input("Client Name *", placeholder="Enter client name")
+        email = st.text_input("Email *", placeholder="Enter email address")
+        company = st.text_input("Company *", placeholder="Enter company name")
+        
+        # SPOC Details Section
+        spoc_name = st.text_input("SPOC Name", placeholder="Enter SPOC full name")
+        phone_number = st.text_input("Phone Number", placeholder="Enter phone number")
 
-        if st.button("✅ Create"):
+        if st.button("✅ Create Client"):
             if not name or not email or not company:
-                st.error("All fields are required.")
+                st.error("Client Name, Email, and Company are required fields (marked with *).")
             else:
                 client_data = {
-                    "name": name,
+                    "client_name": name,
                     "email": email,
                     "company": company,
+                    "spoc_name": spoc_name,
+                    "phone_number": phone_number,
                     "created_by": st.session_state.get("username", "unknown"),
                     "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
@@ -205,7 +213,7 @@ def run():
                 if existing:
                     st.error("A client with this name already exists.")
                 elif save_client(client_data):
-                    st.success("Client created!")
+                    st.success("Client created successfully!")
                     st.session_state.client_view = "dashboard"
                     st.rerun()
 
@@ -230,15 +238,20 @@ def run():
         except:
             pass
 
-        name = st.text_input("Name", value=client.get("client_name", ""))
-        email = st.text_input("Email", value=client.get("email", ""))
-        company = st.text_input("Company", value=client.get("company", ""))
+        # Basic Information Section
+        st.subheader("📋 Basic Information")
+        name = st.text_input("Client Name *", value=client.get("client_name", ""))
+        email = st.text_input("Email *", value=client.get("email", ""))
+        company = st.text_input("Company *", value=client.get("company", ""))
+        
+        # SPOC Details Section
+        st.subheader("👤 SPOC (Single Point of Contact) Details")
         spoc_name = st.text_input("SPOC Name", value=client.get("spoc_name", ""))
         phone_number = st.text_input("Phone Number", value=client.get("phone_number", ""))
 
-        if st.button("💾 Save"):
+        if st.button("💾 Save Changes"):
             if not name or not email or not company:
-                st.error("Name, Email, and Company are required fields.")
+                st.error("Client Name, Email, and Company are required fields (marked with *).")
             else:
                 updated = {
                     "client_name": name,
@@ -252,7 +265,7 @@ def run():
                 if existing:
                     st.error("A client with this name already exists.")
                 elif update_client(cid, updated):
-                    st.success("Client updated.")
+                    st.success("Client updated successfully!")
                     st.session_state.client_view = "dashboard"
                     st.rerun()
 
