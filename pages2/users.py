@@ -110,16 +110,6 @@ class UserInterface:
         project_str = DataUtils.format_project_list(projects)
         st.write(f"**Current Projects:** {project_str}")
         
-        # Display completed projects
-        completed_raw = member.get("completed_projects", [])
-        completed_projects = (
-            [p for p in completed_raw if isinstance(p, str) and p.strip()]
-            if isinstance(completed_raw, list)
-            else []
-        )
-        completed_project_str = DataUtils.format_project_list(completed_projects)
-        st.write(f"**Completed Projects:** {completed_project_str}")
-        
         if st.button("✏️ Edit Profile"):
             SessionManager.set_edit_mode(True)
             st.rerun()

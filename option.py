@@ -68,7 +68,7 @@ st.markdown("""
 if not st.session_state.authenticated:
     load_page("login")
 else:
-    image = Image.open("C:\\Users\\User\\Documents\\GitHub\\iam\\images\\vshesh_logo.png")
+    image = Image.open(".\\images\\vshesh_logo.png")
     st.sidebar.image(image,
         use_container_width=True,
     )
