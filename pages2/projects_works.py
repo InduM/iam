@@ -4,7 +4,7 @@ from datetime import datetime, date, timedelta
 from typing import List
 
 # Import functions from backend and utils
-from .backend import (
+from ..backend.projects_backend import (
     load_projects_from_db, save_project_to_db, update_project_in_db,
     delete_project_from_db, update_project_level_in_db, get_all_clients,
     update_client_project_count, get_team_members, move_project_to_completed,
@@ -494,7 +494,7 @@ def _check_edit_success_messages(pid):
 
 def _check_project_name_exists(name):
     """Check if project name already exists"""
-    from .backend import get_db_collections
+    from ..backend.projects_backend import get_db_collections
     collections = get_db_collections()
     return collections["projects"].find_one({"name": name}) is not None
 

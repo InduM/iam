@@ -4,7 +4,7 @@ from datetime import datetime, date, timedelta
 from typing import List
 
 # Import functions from backend and utils
-from .backend import *
+from backend.projects_backend import *
 from utils.utils_project import *
 
 def run():
@@ -41,9 +41,6 @@ def show_dashboard():
             st.session_state.refresh_projects = True
             st.rerun()
 
-    # Show deadline alerts
-    _show_deadline_alerts()
-
     # Filters and search
     col1, col2, col3 = st.columns([3, 2, 2])
     with col1:
@@ -68,7 +65,7 @@ def show_dashboard():
         _render_project_card(project, i)
 
 def show_create_form():
-    """Display the create project form"""
+    """Display the create project form with substage support"""
     st.title("🛠 Create Project")
     
     # Back button
@@ -93,7 +90,6 @@ def show_create_form():
     start = st.date_input("Start Date")
     due = st.date_input("Due Date")
     
-    
     # Handle template levels
     if st.session_state.selected_template:
         st.markdown(f"Using template: **{st.session_state.selected_template}**")
@@ -106,9 +102,10 @@ def show_create_form():
         _render_custom_levels_editor()
     
     team_members = get_team_members(st.session_state.get("role", ""))
-    # Stage Assignments Section
+    
+    # Enhanced Stage Assignments Section with Substages
     st.markdown("---")
-    stage_assignments = render_stage_assignments_editor(
+    stage_assignments = render_stage_assignments_editor_with_substages(
         st.session_state.custom_levels, 
         team_members, 
         st.session_state.get("stage_assignments", {})
@@ -128,9 +125,9 @@ def show_create_form():
     # Create button
     if st.button("✅ Create Project"):
         _handle_create_project(name, client, description, start, due)
-
+        
 def show_edit_form():
-    """Display the edit project form"""
+    """Display the edit project form with substage support"""
     st.title("✏ Edit Project")
     
     # Back button
@@ -164,18 +161,15 @@ def show_edit_form():
     due = st.date_input("Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
     
     team_members = get_team_members(st.session_state.get("role", ""))    
-    # Stage Assignments Section
+    
+    # Enhanced Stage Assignments Section with Substages
     st.markdown("---")
     current_stage_assignments = project.get("stage_assignments", {})
-    stage_assignments = render_stage_assignments_editor(
+    stage_assignments = render_stage_assignments_editor_with_substages(
         project.get("levels", ["Initial", "Invoice", "Payment"]), 
         team_members, 
         current_stage_assignments
     )
-    
-    # Show current assignments summary
-    if current_stage_assignments:
-        st.info(f"Current assignments: {get_stage_assignment_summary(current_stage_assignments, project.get('levels', []))}")
     
     # Validate stage assignments
     if stage_assignments:
@@ -183,6 +177,9 @@ def show_edit_form():
         if assignment_issues:
             for issue in assignment_issues:
                 st.warning(f"⚠️ {issue}")
+    
+    # Show substage completion summary
+    render_substage_summary_widget(project)
     
     # Show overdue stages
     overdue_stages = get_overdue_stages(
@@ -195,7 +192,7 @@ def show_edit_form():
         for overdue in overdue_stages:
             st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue (Due: {overdue['deadline']})")
     
-    # Progress section
+    # Progress section with substages
     st.subheader("Progress")
     
     def on_change_edit(new_index):
@@ -204,54 +201,19 @@ def show_edit_form():
     # Check for success messages
     _check_edit_success_messages(pid)
     
-    render_level_checkboxes(
+    # Render level checkboxes with substage support
+    render_level_checkboxes_with_substages(
         "edit", pid, int(project.get("level", -1)), 
         project.get("timestamps", {}), project.get("levels", ["Initial", "Invoice", "Payment"]), 
-        on_change_edit, editable=True, stage_assignments=current_stage_assignments
+        on_change_edit, editable=True, stage_assignments=current_stage_assignments, project=project
     )
     
     # Save button
     if st.button("💾 Save"):
         _handle_save_project(pid, project, name, client, description, start, due, original_team, original_name, stage_assignments)
-
+        
 # ───── Helper Functions ─────
 
-def _show_deadline_alerts():
-    """Show deadline alerts for all projects"""
-    all_overdue = []
-    all_upcoming = []
-    
-    for project in st.session_state.projects:
-        stage_assignments = project.get("stage_assignments", {})
-        levels = project.get("levels", [])
-        current_level = project.get("level", -1)
-        
-        # Get overdue stages
-        overdue = get_overdue_stages(stage_assignments, levels, current_level)
-        for item in overdue:
-            item['project_name'] = project.get("name", "Unnamed")
-            all_overdue.append(item)
-        
-        # Get upcoming deadlines
-        upcoming = get_upcoming_deadlines(stage_assignments, levels, days_ahead=7)
-        for item in upcoming:
-            item['project_name'] = project.get("name", "Unnamed")
-            all_upcoming.append(item)
-    
-    # Show alerts
-    if all_overdue:
-        st.error("🔴 **Overdue Stages:**")
-        for item in all_overdue[:5]:  # Show max 5
-            st.error(f"  • **{item['project_name']}** - {item['stage_name']}: {item['days_overdue']} days overdue")
-        if len(all_overdue) > 5:
-            st.error(f"  • ... and {len(all_overdue) - 5} more overdue stages")
-    
-    if all_upcoming:
-        for item in all_upcoming[:5]:  # Show max 5
-            days_text = "today" if item['days_until'] == 0 else f"in {item['days_until']} day(s)"
-            st.warning(f"  • **{item['project_name']}** - {item['stage_name']}: Due {days_text}")
-        if len(all_upcoming) > 5:
-            st.warning(f"  • ... and {len(all_upcoming) - 5} more upcoming deadlines")
 
 def _render_back_button():
     """Render back button with styling"""
@@ -306,8 +268,67 @@ def _apply_filters(projects, search_query, filter_template, filter_level, filter
     
     return filtered_projects
 
+def render_level_checkboxes_with_substages(context, project_id, current_level, timestamps, levels, 
+                                         on_change, editable=False, stage_assignments=None, project=None):
+    """
+    Enhanced level checkboxes that also show substages
+    """
+    if not levels:
+        st.warning("No levels defined for this project.")
+        return
+    
+    for i, level in enumerate(levels):
+        col1, col2 = st.columns([1, 3])
+        
+        with col1:
+            # Main stage checkbox
+            is_checked = i <= current_level
+            key = f"{context}_{project_id}_level_{i}"
+            
+            if editable:
+                checked = st.checkbox(
+                    f"**{i+1}. {level}**",
+                    value=is_checked,
+                    key=key
+                )
+                
+                if checked != is_checked:
+                    new_level = i if checked else i - 1
+                    if on_change:
+                        on_change(new_level)
+            else:
+                status = "✅" if is_checked else "⏳"
+                st.markdown(f"{status} **{i+1}. {level}**")
+            
+            # Show timestamp if available
+            if str(i) in timestamps:
+                timestamp = timestamps[str(i)]
+                try:
+                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    st.caption(f"Completed: {dt.strftime('%Y-%m-%d %H:%M')}")
+                except:
+                    st.caption(f"Completed: {timestamp}")
+        
+        with col2:
+            # Show substages for this stage if they exist
+            if stage_assignments and str(i) in stage_assignments:
+                stage_data = stage_assignments[str(i)]
+                substages = stage_data.get("substages", [])
+                
+                if substages and project:
+                    # Only show substages if this stage is active or completed
+                    if i <= current_level:
+                        render_substage_progress(project, i, substages, editable=editable)
+                    else:
+                        # Show substage names for future stages
+                        st.caption("**Planned Substages:**")
+                        for substage in substages:
+                            st.caption(f"  • {substage['name']}")
+
+
+
 def _render_project_card(project, index):
-    """Render individual project card"""
+    """Render individual project card with substage information"""
     pid = project.get("id", f"auto_{index}")
     
     with st.expander(f"{project.get('name', 'Unnamed')}"):
@@ -324,6 +345,9 @@ def _render_project_card(project, index):
         # Show stage assignments summary
         stage_assignments = project.get("stage_assignments", {})
         
+        # Show substage completion summary
+        render_substage_summary_widget(project)
+        
         # Show overdue stages for this project
         overdue_stages = get_overdue_stages(stage_assignments, levels, current_level)
         if overdue_stages:
@@ -331,17 +355,17 @@ def _render_project_card(project, index):
             for overdue in overdue_stages:
                 st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue")
         
-        # Level checkboxes
+        # Level checkboxes with substages
         def on_change_dashboard(new_index, proj_id=pid, proj=project):
             _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments)
         
         # Check for success messages
         _check_dashboard_success_messages(pid)
         
-        render_level_checkboxes(
+        render_level_checkboxes_with_substages(
             "view", pid, int(project.get("level", -1)), 
             project.get("timestamps", {}), levels, on_change_dashboard, 
-            editable=True, stage_assignments=stage_assignments
+            editable=True, stage_assignments=stage_assignments, project=project
         )
         
         # Email reminder logic
@@ -349,6 +373,7 @@ def _render_project_card(project, index):
         
         # Action buttons
         _render_project_action_buttons(project, pid)
+
 
 def _render_custom_levels_editor():
     """Render custom levels editor"""
@@ -625,7 +650,7 @@ def _check_edit_success_messages(pid):
 
 def _check_project_name_exists(name):
     """Check if project name already exists"""
-    from .backend import get_db_collections
+    from ..backend.projects_backend import get_db_collections
     collections = get_db_collections()
     return collections["projects"].find_one({"name": name}) is not None
 

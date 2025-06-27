@@ -283,3 +283,41 @@ def add_project_to_manager(username, project_name):
         )
     except Exception as e:
         st.error(f"Error adding project to manager profile: {e}")
+
+def update_substage_completion_in_db(project_id: str, stage_index: int, substage_index: int, completed: bool):
+    """
+    Update substage completion status in database
+    This function should be implemented based on your database structure
+    """
+    try:        
+        collections = get_db_collections()
+        
+        # Prepare the update path
+        update_path = f"stage_assignments.{stage_index}.substages.{substage_index}.completed"
+        completed_at_path = f"stage_assignments.{stage_index}.substages.{substage_index}.completed_at"
+        updated_at_path = f"stage_assignments.{stage_index}.substages.{substage_index}.updated_at"
+        
+        update_data = {
+            update_path: completed,
+            updated_at_path: datetime.now().isoformat()
+        }
+        
+        if completed:
+            update_data[completed_at_path] = datetime.now().isoformat()
+        else:
+            # Remove completed_at when marking as incomplete
+            collections["projects"].update_one(
+                {"id": project_id},
+                {"$unset": {completed_at_path: ""}}
+            )
+        
+        result = collections["projects"].update_one(
+            {"id": project_id},
+            {"$set": update_data}
+        )
+        
+        return result.modified_count > 0
+        
+    except Exception as e:
+        st.error(f"Error updating substage completion: {str(e)}")
+        return False

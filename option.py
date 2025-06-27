@@ -2,6 +2,7 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 import importlib
 import base64
+from PIL import Image
 # Initialize session state
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -67,8 +68,8 @@ st.markdown("""
 if not st.session_state.authenticated:
     load_page("login")
 else:
-    st.sidebar.image(
-        "https://i0.wp.com/v-shesh.com/wp-content/uploads/2020/09/v-shesh.png?fit=188%2C70&ssl=1",
+    image = Image.open("C:\\Users\\User\\Documents\\GitHub\\iam\\images\\vshesh_logo.png")
+    st.sidebar.image(image,
         use_container_width=True,
     )
     with st.sidebar:
