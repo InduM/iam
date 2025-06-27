@@ -210,7 +210,6 @@ def run():
                             # Display SPOC information immediately when client is selected
                             if selected_client and selected_client in client_dict:
                                 client_info = client_dict[selected_client]
-                                print("CLIENT INFO: ",client_info)
                                 spoc_name = client_info.get("spoc_name", "")
                                 spoc_email = client_info.get("email", "")
                                 spoc_phone = client_info.get("phone_number", "")
