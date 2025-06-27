@@ -20,6 +20,19 @@ def get_db_collections():
     }
 
 # ───── Project Database Operations ─────
+from pymongo import MongoClient
+
+def get_project_by_name(project_name):
+    
+    try:
+        collections = get_db_collections()
+        projects_collection = collections["projects"]
+        project = projects_collection.find_one({"name": project_name})
+        return project
+    except Exception as e:
+        st.error(f"Error fetching project by name: {e}")
+        return None
+
 def load_projects_from_db():
     """Load projects from database based on user role"""
     try:

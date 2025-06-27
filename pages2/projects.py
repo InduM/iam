@@ -650,7 +650,7 @@ def _check_edit_success_messages(pid):
 
 def _check_project_name_exists(name):
     """Check if project name already exists"""
-    from ..backend.projects_backend import get_db_collections
+    from backend.projects_backend import get_db_collections
     collections = get_db_collections()
     return collections["projects"].find_one({"name": name}) is not None
 
