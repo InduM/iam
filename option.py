@@ -70,10 +70,10 @@ if not st.session_state.authenticated:
     load_page("login")
 else:
     #image = Image.open(".\\images\\vshesh_logo.png")
-    image = render_image("vshesh_logo.png")
-    st.sidebar.image(image,
-        use_container_width=True,
-    )
+    render_image("vshesh_logo.png")
+    #st.sidebar.image(image,
+    #    use_container_width=True,
+    #)
     with st.sidebar:
         if st.session_state["role"] == "user":
             selected = option_menu(
