@@ -591,3 +591,85 @@ def render_substage_assignments_editor(levels: List[str], team_members: List[str
                 }
     
     return updated_assignments
+
+
+def render_substage_progress_with_edit(project, project_id, stage_index, substages, editable=False):
+    """
+    Render substage progress with real-time editing capability
+    """
+    if not substages:
+        return
+    
+    st.caption(f"**Substages for Stage {stage_index + 1}:**")
+    
+    # Get current substage completion status
+    substage_completion = project.get("substage_completion", {})
+    stage_key = str(stage_index)
+    current_completion = substage_completion.get(stage_key, {})
+    
+    substage_changed = False
+    
+    for substage_idx, substage in enumerate(substages):
+        substage_key = f"{stage_key}_{substage_idx}"
+        substage_name = substage.get("name", f"Substage {substage_idx + 1}")
+        
+        # Current completion status
+        is_completed = current_completion.get(str(substage_idx), False)
+        
+        if editable:
+            # Editable checkbox for substage
+            checkbox_key = f"substage_{project_id}_{stage_index}_{substage_idx}"
+            completed = st.checkbox(
+                f"  • {substage_name}",
+                value=is_completed,
+                key=checkbox_key
+            )
+            
+            # Check if substage completion changed
+            if completed != is_completed:
+                substage_changed = True
+                # Update the project's substage completion immediately
+                if "substage_completion" not in project:
+                    project["substage_completion"] = {}
+                if stage_key not in project["substage_completion"]:
+                    project["substage_completion"][stage_key] = {}
+                
+                project["substage_completion"][stage_key][str(substage_idx)] = completed
+                
+                # Add timestamp if completed
+                if completed:
+                    timestamp_key = f"substage_timestamps"
+                    if timestamp_key not in project:
+                        project[timestamp_key] = {}
+                    if stage_key not in project[timestamp_key]:
+                        project[timestamp_key][stage_key] = {}
+                    project[timestamp_key][stage_key][str(substage_idx)] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Update in database immediately
+                update_substage_completion_in_db(project_id, project["substage_completion"])
+                
+                # Show immediate feedback
+                st.session_state[f"substage_update_success_{project_id}_{stage_index}_{substage_idx}"] = True
+        else:
+            # Read-only display
+            status = "✅" if is_completed else "⏳"
+            st.caption(f"  {status} {substage_name}")
+            
+            # Show completion timestamp if available
+            if is_completed:
+                timestamps = project.get("substage_timestamps", {})
+                if (stage_key in timestamps and 
+                    str(substage_idx) in timestamps[stage_key]):
+                    timestamp = timestamps[stage_key][str(substage_idx)]
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        st.caption(f"    Completed: {dt.strftime('%Y-%m-%d %H:%M')}")
+                    except:
+                        st.caption(f"    Completed: {timestamp}")
+    
+    # Show success message for substage updates
+    for substage_idx in range(len(substages)):
+        success_key = f"substage_update_success_{project_id}_{stage_index}_{substage_idx}"
+        if st.session_state.get(success_key, False):
+            st.success("Substage status updated!")
+            st.session_state[success_key] = False

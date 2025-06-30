@@ -272,7 +272,7 @@ def _apply_filters(projects, search_query, filter_template, filter_level, filter
 def render_level_checkboxes_with_substages(context, project_id, current_level, timestamps, levels, 
                                          on_change, editable=False, stage_assignments=None, project=None):
     """
-    Enhanced level checkboxes that also show substages
+    Enhanced level checkboxes that also show substages with validation
     """
     if not levels:
         st.warning("No levels defined for this project.")
@@ -286,17 +286,40 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
             is_checked = i <= current_level
             key = f"{context}_{project_id}_level_{i}"
             
+            # Check if all substages are completed for this stage
+            substages_complete = _are_all_substages_complete(project, stage_assignments, i)
+            can_check_stage = substages_complete or not _has_substages(stage_assignments, i)
+            
             if editable:
+                # For advancing stages (checking), require substages to be complete
+                # For going backward (unchecking), always allow
+                can_advance = can_check_stage or is_checked
+                
                 checked = st.checkbox(
                     f"**{i+1}. {level}**",
                     value=is_checked,
-                    key=key
+                    key=key,
+                    disabled=False  # Never disable, handle validation in callback
                 )
                 
+                # Handle state change
                 if checked != is_checked:
-                    new_level = i if checked else i - 1
-                    if on_change:
-                        on_change(new_level)
+                    if checked and not can_check_stage:
+                        # Trying to advance without completing substages
+                        st.error("❌ Complete all substages first before advancing to this stage!")
+                        # Force rerun to reset checkbox state
+                        time.sleep(0.1)
+                        st.rerun()
+                    else:
+                        # Valid state change
+                        new_level = i if checked else i - 1
+                        if on_change:
+                            on_change(new_level)
+                
+                # Show warning for stages that can't be checked
+                if not can_check_stage and not is_checked:
+                    st.caption("⚠️ Complete all substages first")
+                    
             else:
                 status = "✅" if is_checked else "⏳"
                 st.markdown(f"{status} **{i+1}. {level}**")
@@ -318,8 +341,8 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                 
                 if substages and project:
                     # Only show substages if this stage is active or completed
-                    if i <= current_level:
-                        render_substage_progress(project, i, substages, editable=editable)
+                    if i <= current_level + 1:  # Show substages for current and next stage
+                        render_substage_progress_with_edit(project, project_id, i, substages, editable=editable)
                     else:
                         # Show substage names for future stages
                         st.caption("**Planned Substages:**")
@@ -327,9 +350,181 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                             st.caption(f"  • {substage['name']}")
 
 
+def _has_substages(stage_assignments, stage_index):
+    """
+    Check if a stage has substages defined
+    """
+    if not stage_assignments:
+        return False
+    
+    stage_key = str(stage_index)
+    if stage_key not in stage_assignments:
+        return False
+    
+    substages = stage_assignments[stage_key].get("substages", [])
+    return len(substages) > 0
+
+def _auto_advance_main_stage(project, project_id, stage_index):
+    """
+    Automatically advance the main stage when all substages are completed
+    """
+    current_level = project.get("level", -1)
+    
+    # Only auto-advance if this is the next stage
+    if stage_index == current_level + 1:
+        timestamp = get_current_timestamp()
+        project["level"] = stage_index
+        if "timestamps" not in project:
+            project["timestamps"] = {}
+        project["timestamps"][str(stage_index)] = timestamp
+        
+        # Update in database
+        if update_project_level_in_db(project_id, stage_index, timestamp):
+            # Get stage assignments for notifications
+            stage_assignments = project.get("stage_assignments", {})
+            
+            # Notify assigned members for the new stage
+            if stage_assignments:
+                notify_assigned_members(stage_assignments, project.get("name", ""), stage_index)
+            
+            # Check if project reached completion
+            _check_project_completion(project, project_id)
+            
+            # Set success message
+            st.session_state[f"auto_advance_success_{project_id}_{stage_index}"] = True
+            st.success(f"🎉 Stage {stage_index + 1} automatically completed - all substages done!")
+
+def render_substage_progress_with_edit(project, project_id, stage_index, substages, editable=False):
+    """
+    Render substage progress with real-time editing capability and validation
+    """
+    if not substages:
+        return
+    
+    st.caption(f"**Substages for Stage {stage_index + 1}:**")
+    
+    # Get current substage completion status
+    substage_completion = project.get("substage_completion", {})
+    stage_key = str(stage_index)
+    current_completion = substage_completion.get(stage_key, {})
+    
+    # Check if this stage is accessible (current stage or previous stages)
+    current_level = project.get("level", -1)
+    stage_accessible = stage_index <= current_level + 1
+    
+    substage_changed = False
+    
+    for substage_idx, substage in enumerate(substages):
+        substage_key = f"{stage_key}_{substage_idx}"
+        substage_name = substage.get("name", f"Substage {substage_idx + 1}")
+        
+        # Current completion status
+        is_completed = current_completion.get(str(substage_idx), False)
+        
+        if editable and stage_accessible:
+            # Only allow editing if stage is accessible
+            checkbox_key = f"substage_{project_id}_{stage_index}_{substage_idx}"
+            completed = st.checkbox(
+                f"  • {substage_name}",
+                value=is_completed,
+                key=checkbox_key
+            )
+            
+            # Check if substage completion changed
+            if completed != is_completed:
+                substage_changed = True
+                # Update the project's substage completion immediately
+                if "substage_completion" not in project:
+                    project["substage_completion"] = {}
+                if stage_key not in project["substage_completion"]:
+                    project["substage_completion"][stage_key] = {}
+                
+                project["substage_completion"][stage_key][str(substage_idx)] = completed
+                
+                # Add timestamp if completed
+                if completed:
+                    timestamp_key = f"substage_timestamps"
+                    if timestamp_key not in project:
+                        project[timestamp_key] = {}
+                    if stage_key not in project[timestamp_key]:
+                        project[timestamp_key][stage_key] = {}
+                    project[timestamp_key][stage_key][str(substage_idx)] = get_current_timestamp()
+                
+                # Update in database immediately
+                update_substage_completion_in_db(project_id, project["substage_completion"])
+        else:
+            # Read-only display or inaccessible stage
+            status = "✅" if is_completed else "⏳"
+            disabled_text = " (locked)" if not stage_accessible and editable else ""
+            st.caption(f"  {status} {substage_name}{disabled_text}")
+            
+            # Show completion timestamp if available
+            if is_completed:
+                timestamps = project.get("substage_timestamps", {})
+                if (stage_key in timestamps and 
+                    str(substage_idx) in timestamps[stage_key]):
+                    timestamp = timestamps[stage_key][str(substage_idx)]
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        st.caption(f"    Completed: {dt.strftime('%Y-%m-%d %H:%M')}")
+                    except:
+                        st.caption(f"    Completed: {timestamp}")
+    
+    # Handle substage changes and auto-advance logic
+    if substage_changed:
+        # Check if all substages are now complete and auto-advance main stage
+        current_stage_assignments = {stage_key: {"substages": substages}}
+        if _are_all_substages_complete(project, current_stage_assignments, stage_index):
+            current_level = project.get("level", -1)
+            if stage_index == current_level + 1:
+                # Auto-advance main stage if all substages complete
+                _auto_advance_main_stage(project, project_id, stage_index)
+        
+        # Show success message and rerun to update UI
+        st.success("Substage status updated!")
+        time.sleep(0.1)  # Brief pause for user feedback
+        st.rerun()
+    
+    # Show completion status for the stage
+    if substages:
+        completed_count = sum(1 for idx in range(len(substages)) 
+                            if current_completion.get(str(idx), False))
+        total_count = len(substages)
+        completion_percentage = (completed_count / total_count) * 100
+        
+        if completed_count == total_count:
+            st.success(f"✅ All substages complete ({completed_count}/{total_count})")
+        else:
+            st.info(f"📊 Progress: {completed_count}/{total_count} substages ({completion_percentage:.0f}%)")
+
+def _are_all_substages_complete(project, stage_assignments, stage_index):
+    """
+    Check if all substages for a given stage are completed
+    """
+    if not project or not stage_assignments:
+        return True  # No substages means stage can be completed
+    
+    stage_key = str(stage_index)
+    if stage_key not in stage_assignments:
+        return True  # No substages defined for this stage
+    
+    substages = stage_assignments[stage_key].get("substages", [])
+    if not substages:
+        return True  # No substages means stage can be completed
+    
+    substage_completion = project.get("substage_completion", {})
+    stage_completion = substage_completion.get(stage_key, {})
+    
+    # Check if all substages are completed
+    for substage_idx in range(len(substages)):
+        if not stage_completion.get(str(substage_idx), False):
+            return False
+    
+    return True
+
 
 def _render_project_card(project, index):
-    """Render individual project card with substage information"""
+    """Render individual project card with substage validation"""
     pid = project.get("id", f"auto_{index}")
     
     with st.expander(f"{project.get('name', 'Unnamed')}"):
@@ -356,12 +551,26 @@ def _render_project_card(project, index):
             for overdue in overdue_stages:
                 st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue")
         
-        # Level checkboxes with substages
+        # Level checkboxes with substages and validation
         def on_change_dashboard(new_index, proj_id=pid, proj=project):
+            # Validate substages before allowing stage change
+            if new_index > project.get("level", -1):
+                # Check if all substages are complete for the new stage
+                if not _are_all_substages_complete(project, stage_assignments, new_index):
+                    st.error("❌ Cannot advance to this stage - complete all substages first!")
+                    return
+            
             _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments)
         
         # Check for success messages
         _check_dashboard_success_messages(pid)
+        
+        # Check for auto-advance success messages
+        for i in range(len(levels)):
+            auto_advance_key = f"auto_advance_success_{pid}_{i}"
+            if st.session_state.get(auto_advance_key, False):
+                st.success(f"🎉 Stage {i + 1} automatically completed!")
+                st.session_state[auto_advance_key] = False
         
         render_level_checkboxes_with_substages(
             "view", pid, int(project.get("level", -1)), 
@@ -374,7 +583,6 @@ def _render_project_card(project, index):
         
         # Action buttons
         _render_project_action_buttons(project, pid)
-
 
 def _render_custom_levels_editor():
     """Render custom levels editor"""
@@ -455,13 +663,19 @@ def _handle_create_project(name, client, description, start, due):
             st.rerun()
 
 def _handle_save_project(pid, project, name, client, description, start, due, original_team, original_name, stage_assignments):
-    """Handle project save"""
+    """Handle project save with substage data"""
     if not validate_project_dates(start, due):
         st.error("Cannot save: Due date must be later than the start date.")
     elif not name or not client:
         st.error("Name and client are required.")
     else:
         updated_project = _create_updated_project_data(project, name, client, description, start, due, stage_assignments)
+        
+        # Include substage completion data
+        if "substage_completion" in project:
+            updated_project["substage_completion"] = project["substage_completion"]
+        if "substage_timestamps" in project:
+            updated_project["substage_timestamps"] = project["substage_timestamps"]
         
         if update_project_in_db(pid, updated_project):
             success_messages = []
@@ -474,7 +688,6 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
                 updated_count = update_project_name_in_user_profiles(original_name, name)
                 if updated_count > 0:
                     success_messages.append(f"Project name updated in {updated_count} user profiles!")
-            
             
             # Handle stage assignment changes
             old_assignments = project.get("stage_assignments", {})
@@ -492,6 +705,15 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
 
 def _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments):
     """Handle level change in dashboard view"""
+    # Validate substages before allowing stage change
+    current_level = proj.get("level", -1)
+    
+    if new_index > current_level:
+        # Check if all substages are complete for the new stage
+        if not _are_all_substages_complete(proj, stage_assignments, new_index):
+            st.error("❌ Cannot advance to this stage - complete all substages first!")
+            return
+    
     timestamp = get_current_timestamp()
     if update_project_level_in_db(proj_id, new_index, timestamp):
         proj["level"] = new_index
@@ -507,9 +729,22 @@ def _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments):
         _check_project_completion(proj, proj_id)
         
         st.session_state[f"level_update_success_{proj_id}"] = True
+        st.success("Project level updated!")
+        time.sleep(0.1)  # Brief pause for user feedback
+        st.rerun()
+
 
 def _handle_level_change_edit(project, pid, new_index, stage_assignments):
     """Handle level change in edit view"""
+    # Validate substages before allowing stage change
+    current_level = project.get("level", -1)
+    
+    if new_index > current_level:
+        # Check if all substages are complete for the new stage
+        if not _are_all_substages_complete(project, stage_assignments, new_index):
+            st.error("❌ Cannot advance to this stage - complete all substages first!")
+            return
+    
     timestamp = get_current_timestamp()
     project["level"] = new_index
     project.setdefault("timestamps", {})[str(new_index)] = timestamp
@@ -519,9 +754,13 @@ def _handle_level_change_edit(project, pid, new_index, stage_assignments):
         # Notify assigned members for the new stage
         if stage_assignments:
             notify_assigned_members(stage_assignments, project.get("name", ""), new_index)
-            
+        
         _check_project_completion(project, pid)
         st.session_state[f"edit_level_update_success_{pid}"] = True
+        st.success("Project level updated!")
+        time.sleep(0.1)  # Brief pause for user feedback
+        st.rerun()
+
 
 def _send_stage_assignment_notifications(project):
     """Send notifications for stage assignments in new project"""
@@ -673,20 +912,29 @@ def _create_project_data(name, client, description, start, due):
         "created_by": st.session_state.get("username", "unknown"),
     }
 
-def _create_updated_project_data(project, name, client, description, start, due,stage_assignments):
-    """Create updated project data dictionary"""
-    return {
+def _create_updated_project_data(project, name, client, description, start, due, stage_assignments):
+    """Create updated project data dictionary including substage data"""
+    updated_data = {
         "name": name,
         "client": client,
         "description": description,
         "startDate": start.isoformat(),
         "dueDate": due.isoformat(),
+        "stage_assignments": stage_assignments,
         "updated_at": datetime.now().isoformat(),
         "created_at": project.get("created_at", datetime.now().isoformat()),
         "levels": project.get("levels", ["Initial", "Invoice", "Payment"]),
         "level": project.get("level", -1),
         "timestamps": project.get("timestamps", {})
     }
+    
+    # Include substage completion data if it exists
+    if "substage_completion" in project:
+        updated_data["substage_completion"] = project["substage_completion"]
+    if "substage_timestamps" in project:
+        updated_data["substage_timestamps"] = project["substage_timestamps"]
+    
+    return updated_data
 
 def _reset_create_form_state():
     """Reset create form state variables"""

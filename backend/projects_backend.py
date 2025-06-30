@@ -334,3 +334,24 @@ def update_substage_completion_in_db(project_id: str, stage_index: int, substage
     except Exception as e:
         st.error(f"Error updating substage completion: {str(e)}")
         return False
+
+def update_substage_completion_in_db(project_id, substage_completion):
+    """
+    Update substage completion in database immediately
+    """
+    try:
+        collections = get_db_collections()
+        
+        result = collections["projects"].update_one(
+            {"id": project_id},
+            {
+                "$set": {
+                    "substage_completion": substage_completion,
+                    "updated_at": datetime.now().isoformat()
+                }
+            }
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        st.error(f"Failed to update substage completion: {str(e)}")
+        return False
