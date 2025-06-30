@@ -273,6 +273,7 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                                          on_change, editable=False, stage_assignments=None, project=None):
     """
     Enhanced level checkboxes that also show substages with validation
+    Updated to enforce sequential checking/unchecking
     """
     if not levels:
         st.warning("No levels defined for this project.")
@@ -290,35 +291,179 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
             substages_complete = _are_all_substages_complete(project, stage_assignments, i)
             can_check_stage = substages_complete or not _has_substages(stage_assignments, i)
             
+            # Sequential checking logic
+            can_advance_sequentially = (i == current_level + 1)  # Can only check next stage
+            can_go_back_sequentially = (i == current_level)  # Can only uncheck current stage
+            
             if editable:
-                # For advancing stages (checking), require substages to be complete
-                # For going backward (unchecking), always allow
-                can_advance = can_check_stage or is_checked
-                
                 checked = st.checkbox(
                     f"**{i+1}. {level}**",
                     value=is_checked,
                     key=key,
-                    disabled=False  # Never disable, handle validation in callback
+                    disabled=False
                 )
                 
-                # Handle state change
+                # Handle state change with sequential validation
                 if checked != is_checked:
-                    if checked and not can_check_stage:
-                        # Trying to advance without completing substages
-                        st.error("❌ Complete all substages first before advancing to this stage!")
-                        # Force rerun to reset checkbox state
-                        time.sleep(0.1)
-                        st.rerun()
+                    if checked:
+                        # Trying to check a stage
+                        if not can_advance_sequentially:
+                            st.error("❌ You can only advance to the next stage sequentially!")
+                            time.sleep(0.1)
+                            st.rerun()
+                        elif not can_check_stage:
+                            st.error("❌ Complete all substages first before advancing to this stage!")
+                            time.sleep(0.1)
+                            st.rerun()
+                        else:
+                            # Valid advance
+                            if on_change:
+                                on_change(i)
                     else:
-                        # Valid state change
-                        new_level = i if checked else i - 1
-                        if on_change:
-                            on_change(new_level)
+                        # Trying to uncheck a stage
+                        if not can_go_back_sequentially:
+                            st.error("❌ You can only go back one stage at a time!")
+                            time.sleep(0.1)
+                            st.rerun()
+                        else:
+                            # Valid go back
+                            if on_change:
+                                on_change(i - 1)
                 
-                # Show warning for stages that can't be checked
+                # Show status messages
                 if not can_check_stage and not is_checked:
                     st.caption("⚠️ Complete all substages first")
+                elif not can_advance_sequentially and not is_checked:
+                    st.caption("🔒 Complete previous stages first")
+                elif not can_go_back_sequentially and is_checked and i < current_level:
+                    st.caption("🔒 Completed stage")
+                    
+            else:
+                status = "✅" if is_checked else "⏳"
+# ───── Helper Functions ─────
+
+
+def _render_back_button():
+    """Render back button with styling"""
+    st.markdown(
+        """
+        <style>
+        .back-button {
+            font-size: 24px;
+            margin-bottom: 1rem;
+            display: inline-block;
+            cursor: pointer;
+            color: #007BFF;
+        }
+        .back-button:hover {
+            text-decoration: underline;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    if st.button("← Back", key="back_button"):
+        st.session_state.view = "dashboard"
+        st.rerun()
+
+def _apply_filters(projects, search_query, filter_template, filter_level, filter_due):
+    """Apply filters to project list"""
+    filtered_projects = projects
+    
+    if search_query:
+        q = search_query.lower()
+        filtered_projects = [p for p in filtered_projects if
+                            q in p.get("name", "").lower() or
+                            q in p.get("client", "").lower() or
+                            any(q in member.lower() for member in p.get("team", []))]
+    
+    if filter_template != "All":
+        filtered_projects = [p for p in filtered_projects if p.get("template") == filter_template]
+    
+    if filter_due:
+        filtered_projects = [p for p in filtered_projects if 
+                           p.get("dueDate") and date.fromisoformat(p["dueDate"]) <= filter_due]
+    
+    if filter_level != "All":
+        filtered_projects = [
+            p for p in filtered_projects
+            if p.get("level", -1) >= 0 and
+            p.get("levels") and
+            len(p["levels"]) > p.get("level", -1) and
+            p["levels"][p["level"]] == filter_level
+        ]
+    
+    return filtered_projects
+
+def render_level_checkboxes_with_substages(context, project_id, current_level, timestamps, levels, 
+                                         on_change, editable=False, stage_assignments=None, project=None):
+    """
+    Enhanced level checkboxes that also show substages with validation
+    Updated to enforce sequential checking/unchecking
+    """
+    if not levels:
+        st.warning("No levels defined for this project.")
+        return
+    
+    for i, level in enumerate(levels):
+        col1, col2 = st.columns([1, 3])
+        
+        with col1:
+            # Main stage checkbox
+            is_checked = i <= current_level
+            key = f"{context}_{project_id}_level_{i}"
+            
+            # Check if all substages are completed for this stage
+            substages_complete = _are_all_substages_complete(project, stage_assignments, i)
+            can_check_stage = substages_complete or not _has_substages(stage_assignments, i)
+            
+            # Sequential checking logic
+            can_advance_sequentially = (i == current_level + 1)  # Can only check next stage
+            can_go_back_sequentially = (i == current_level)  # Can only uncheck current stage
+            
+            if editable:
+                checked = st.checkbox(
+                    f"**{i+1}. {level}**",
+                    value=is_checked,
+                    key=key,
+                    disabled=False
+                )
+                
+                # Handle state change with sequential validation
+                if checked != is_checked:
+                    if checked:
+                        # Trying to check a stage
+                        if not can_advance_sequentially:
+                            st.error("❌ You can only advance to the next stage sequentially!")
+                            time.sleep(0.1)
+                            st.rerun()
+                        elif not can_check_stage:
+                            st.error("❌ Complete all substages first before advancing to this stage!")
+                            time.sleep(0.1)
+                            st.rerun()
+                        else:
+                            # Valid advance
+                            if on_change:
+                                on_change(i)
+                    else:
+                        # Trying to uncheck a stage
+                        if not can_go_back_sequentially:
+                            st.error("❌ You can only go back one stage at a time!")
+                            time.sleep(0.1)
+                            st.rerun()
+                        else:
+                            # Valid go back
+                            if on_change:
+                                on_change(i - 1)
+                
+                # Show status messages
+                if not can_check_stage and not is_checked:
+                    st.caption("⚠️ Complete all substages first")
+                elif not can_advance_sequentially and not is_checked:
+                    st.caption("🔒 Complete previous stages first")
+                elif not can_go_back_sequentially and is_checked and i < current_level:
+                    st.caption("🔒 Completed stage")
                     
             else:
                 status = "✅" if is_checked else "⏳"
@@ -394,9 +539,46 @@ def _auto_advance_main_stage(project, project_id, stage_index):
             st.session_state[f"auto_advance_success_{project_id}_{stage_index}"] = True
             st.success(f"🎉 Stage {stage_index + 1} automatically completed - all substages done!")
 
+
+def _auto_uncheck_main_stage(project, project_id, stage_index):
+    """
+    Automatically uncheck the main stage when a substage is unchecked
+    Enhanced to handle sequential unchecking
+    """
+    current_level = project.get("level", -1)
+    
+    # Only auto-uncheck if this stage is currently completed
+    if stage_index <= current_level:
+        # Set the level to one stage before this stage
+        new_level = stage_index - 1
+        
+        # Sequential unchecking: uncheck all stages after the new level
+        levels = project.get("levels", [])
+        for level_idx in range(new_level + 1, len(levels)):
+            if level_idx <= current_level:
+                # Remove timestamps for unchecked stages
+                if "timestamps" in project and str(level_idx) in project["timestamps"]:
+                    del project["timestamps"][str(level_idx)]
+        
+        project["level"] = new_level
+        if "timestamps" not in project:
+            project["timestamps"] = {}
+        
+        # Update the timestamp for the new current level
+        if new_level >= 0:
+            project["timestamps"][str(new_level)] = get_current_timestamp()
+        
+        # Update in database
+        if update_project_level_in_db(project_id, new_level, get_current_timestamp()):
+            # Set success message
+            st.session_state[f"auto_uncheck_success_{project_id}_{stage_index}"] = True
+            st.warning(f"⚠️ Stage {stage_index + 1} and subsequent stages automatically unchecked!")
+
+
 def render_substage_progress_with_edit(project, project_id, stage_index, substages, editable=False):
     """
     Render substage progress with real-time editing capability and validation
+    Enhanced with sequential substage checking
     """
     if not substages:
         return
@@ -413,6 +595,15 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
     stage_accessible = stage_index <= current_level + 1
     
     substage_changed = False
+    substage_unchecked = False
+    
+    # Find the highest completed substage for sequential logic
+    highest_completed_substage = -1
+    for idx in range(len(substages)):
+        if current_completion.get(str(idx), False):
+            highest_completed_substage = idx
+        else:
+            break  # Stop at first incomplete substage
     
     for substage_idx, substage in enumerate(substages):
         substage_key = f"{stage_key}_{substage_idx}"
@@ -422,7 +613,10 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
         is_completed = current_completion.get(str(substage_idx), False)
         
         if editable and stage_accessible:
-            # Only allow editing if stage is accessible
+            # Sequential substage logic
+            can_check_substage = (substage_idx == highest_completed_substage + 1)  # Can only check next substage
+            can_uncheck_substage = (substage_idx == highest_completed_substage)  # Can only uncheck last completed substage
+            
             checkbox_key = f"substage_{project_id}_{stage_index}_{substage_idx}"
             completed = st.checkbox(
                 f"  • {substage_name}",
@@ -432,7 +626,28 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
             
             # Check if substage completion changed
             if completed != is_completed:
+                if completed:
+                    # Trying to check a substage
+                    if not can_check_substage:
+                        st.error("❌ Complete substages sequentially!")
+                        time.sleep(0.1)
+                        st.rerun()
+                        return
+                else:
+                    # Trying to uncheck a substage
+                    if not can_uncheck_substage:
+                        st.error("❌ You can only uncheck the last completed substage!")
+                        time.sleep(0.1)
+                        st.rerun()
+                        return
+                
+                # Valid substage change
                 substage_changed = True
+                
+                # Track if a substage was unchecked
+                if not completed and is_completed:
+                    substage_unchecked = True
+                
                 # Update the project's substage completion immediately
                 if "substage_completion" not in project:
                     project["substage_completion"] = {}
@@ -441,17 +656,30 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                 
                 project["substage_completion"][stage_key][str(substage_idx)] = completed
                 
-                # Add timestamp if completed
+                # Add/remove timestamp
+                timestamp_key = f"substage_timestamps"
                 if completed:
-                    timestamp_key = f"substage_timestamps"
                     if timestamp_key not in project:
                         project[timestamp_key] = {}
                     if stage_key not in project[timestamp_key]:
                         project[timestamp_key][stage_key] = {}
                     project[timestamp_key][stage_key][str(substage_idx)] = get_current_timestamp()
+                else:
+                    # Remove timestamp when unchecked
+                    if (timestamp_key in project and 
+                        stage_key in project[timestamp_key] and 
+                        str(substage_idx) in project[timestamp_key][stage_key]):
+                        del project[timestamp_key][stage_key][str(substage_idx)]
                 
                 # Update in database immediately
                 update_substage_completion_in_db(project_id, project["substage_completion"])
+            
+            # Show status messages for substages
+            if not can_check_substage and not is_completed:
+                st.caption("    🔒 Complete previous substages first")
+            elif not can_uncheck_substage and is_completed and substage_idx < highest_completed_substage:
+                st.caption("    🔒 Completed substage")
+                
         else:
             # Read-only display or inaccessible stage
             status = "✅" if is_completed else "⏳"
@@ -470,19 +698,23 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                     except:
                         st.caption(f"    Completed: {timestamp}")
     
-    # Handle substage changes and auto-advance logic
+    # Handle substage changes and auto-advance/auto-uncheck logic
     if substage_changed:
-        # Check if all substages are now complete and auto-advance main stage
         current_stage_assignments = {stage_key: {"substages": substages}}
-        if _are_all_substages_complete(project, current_stage_assignments, stage_index):
-            current_level = project.get("level", -1)
+        
+        # Auto-uncheck main stage if a substage was unchecked and main stage was completed
+        if substage_unchecked and current_level >= stage_index:
+            _auto_uncheck_main_stage(project, project_id, stage_index)
+        
+        # Check if all substages are now complete and auto-advance main stage
+        elif _are_all_substages_complete(project, current_stage_assignments, stage_index):
             if stage_index == current_level + 1:
                 # Auto-advance main stage if all substages complete
                 _auto_advance_main_stage(project, project_id, stage_index)
         
         # Show success message and rerun to update UI
         st.success("Substage status updated!")
-        time.sleep(0.1)  # Brief pause for user feedback
+        time.sleep(0.1)
         st.rerun()
     
     # Show completion status for the stage
@@ -492,9 +724,7 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
         total_count = len(substages)
         completion_percentage = (completed_count / total_count) * 100
         
-        if completed_count == total_count:
-            st.success(f"✅ All substages complete ({completed_count}/{total_count})")
-        else:
+        if completed_count < total_count:
             st.info(f"📊 Progress: {completed_count}/{total_count} substages ({completion_percentage:.0f}%)")
 
 def _are_all_substages_complete(project, stage_assignments, stage_index):
@@ -524,7 +754,9 @@ def _are_all_substages_complete(project, stage_assignments, stage_index):
 
 
 def _render_project_card(project, index):
-    """Render individual project card with substage validation"""
+    """Render individual project card with substage validation
+    Updated to show auto-uncheck messages
+    """
     pid = project.get("id", f"auto_{index}")
     
     with st.expander(f"{project.get('name', 'Unnamed')}"):
@@ -571,6 +803,12 @@ def _render_project_card(project, index):
             if st.session_state.get(auto_advance_key, False):
                 st.success(f"🎉 Stage {i + 1} automatically completed!")
                 st.session_state[auto_advance_key] = False
+            
+            # Check for auto-uncheck success messages
+            auto_uncheck_key = f"auto_uncheck_success_{pid}_{i}"
+            if st.session_state.get(auto_uncheck_key, False):
+                st.warning(f"⚠️ Stage {i + 1} automatically unchecked!")
+                st.session_state[auto_uncheck_key] = False
         
         render_level_checkboxes_with_substages(
             "view", pid, int(project.get("level", -1)), 
@@ -583,6 +821,7 @@ def _render_project_card(project, index):
         
         # Action buttons
         _render_project_action_buttons(project, pid)
+
 
 def _render_custom_levels_editor():
     """Render custom levels editor"""
@@ -704,17 +943,36 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
             st.rerun()
 
 def _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments):
-    """Handle level change in dashboard view"""
-    # Validate substages before allowing stage change
+    """Handle level change in dashboard view with sequential validation"""
     current_level = proj.get("level", -1)
     
+    # Sequential validation for main stages
     if new_index > current_level:
+        # Can only advance one stage at a time
+        if new_index != current_level + 1:
+            st.error("❌ You can only advance to the next stage sequentially!")
+            return
+        
         # Check if all substages are complete for the new stage
         if not _are_all_substages_complete(proj, stage_assignments, new_index):
             st.error("❌ Cannot advance to this stage - complete all substages first!")
             return
+    elif new_index < current_level:
+        # Can only go back one stage at a time
+        if new_index != current_level - 1:
+            st.error("❌ You can only go back one stage at a time!")
+            return
     
     timestamp = get_current_timestamp()
+    
+    # Handle unchecking - remove timestamps for unchecked stages
+    if new_index < current_level:
+        levels = proj.get("levels", [])
+        for level_idx in range(new_index + 1, len(levels)):
+            if level_idx <= current_level:
+                if "timestamps" in proj and str(level_idx) in proj["timestamps"]:
+                    del proj["timestamps"][str(level_idx)]
+    
     if update_project_level_in_db(proj_id, new_index, timestamp):
         proj["level"] = new_index
         if "timestamps" not in proj:
@@ -730,22 +988,40 @@ def _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments):
         
         st.session_state[f"level_update_success_{proj_id}"] = True
         st.success("Project level updated!")
-        time.sleep(0.1)  # Brief pause for user feedback
+        time.sleep(0.1)
         st.rerun()
 
-
 def _handle_level_change_edit(project, pid, new_index, stage_assignments):
-    """Handle level change in edit view"""
-    # Validate substages before allowing stage change
+    """Handle level change in edit view with sequential validation"""
     current_level = project.get("level", -1)
     
+    # Sequential validation for main stages
     if new_index > current_level:
+        # Can only advance one stage at a time
+        if new_index != current_level + 1:
+            st.error("❌ You can only advance to the next stage sequentially!")
+            return
+        
         # Check if all substages are complete for the new stage
         if not _are_all_substages_complete(project, stage_assignments, new_index):
             st.error("❌ Cannot advance to this stage - complete all substages first!")
             return
+    elif new_index < current_level:
+        # Can only go back one stage at a time
+        if new_index != current_level - 1:
+            st.error("❌ You can only go back one stage at a time!")
+            return
     
     timestamp = get_current_timestamp()
+    
+    # Handle unchecking - remove timestamps for unchecked stages
+    if new_index < current_level:
+        levels = project.get("levels", [])
+        for level_idx in range(new_index + 1, len(levels)):
+            if level_idx <= current_level:
+                if "timestamps" in project and str(level_idx) in project["timestamps"]:
+                    del project["timestamps"][str(level_idx)]
+    
     project["level"] = new_index
     project.setdefault("timestamps", {})[str(new_index)] = timestamp
     
@@ -758,9 +1034,8 @@ def _handle_level_change_edit(project, pid, new_index, stage_assignments):
         _check_project_completion(project, pid)
         st.session_state[f"edit_level_update_success_{pid}"] = True
         st.success("Project level updated!")
-        time.sleep(0.1)  # Brief pause for user feedback
+        time.sleep(0.1)
         st.rerun()
-
 
 def _send_stage_assignment_notifications(project):
     """Send notifications for stage assignments in new project"""
@@ -961,3 +1236,4 @@ def _display_success_messages(messages):
             st.success(message)
     else:
         st.success("Changes saved to database!")
+

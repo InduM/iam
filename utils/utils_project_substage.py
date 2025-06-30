@@ -335,8 +335,7 @@ def render_substage_progress(project: Dict, stage_index: int, substages: List[Di
                     
                     st.success(f"Substage '{substage.get('name')}' completed!")
                     st.rerun()
-
-                    
+                   
 def handle_substage_completion(project, stage_index, substage_index, completed):
     """
     Handle substage completion/incompletion
@@ -591,7 +590,6 @@ def render_substage_assignments_editor(levels: List[str], team_members: List[str
                 }
     
     return updated_assignments
-
 
 def render_substage_progress_with_edit(project, project_id, stage_index, substages, editable=False):
     """
