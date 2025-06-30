@@ -5,7 +5,8 @@ from typing import List
 
 # Import functions from backend and utils
 from backend.projects_backend import *
-from utils.utils_project import *
+from utils.utils_project_core import *
+from utils.utils_project_substage import *
 
 def run():
     """Main function to run the project management interface"""

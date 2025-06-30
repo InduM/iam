@@ -353,9 +353,7 @@ def render_stage_assignments_editor_with_substages(levels: List[str], team_membe
                                                  current_assignments: Dict = None) -> Dict:
     """
     Enhanced stage assignment editor with full substage support
-    """
-    st.subheader("Stage Assignments & Substages")
-    
+    """    
     if current_assignments is None:
         current_assignments = {}
     
@@ -365,7 +363,7 @@ def render_stage_assignments_editor_with_substages(levels: List[str], team_membe
         stage_key = str(i)
         current_stage = current_assignments.get(stage_key, {})
         
-        st.markdown(f"### 📋 Stage {i+1}: {level}")
+        st.markdown(f"### Stage {i+1}: {level}")
         
         with st.container():
             # Stage-level assignments
@@ -404,8 +402,7 @@ def render_stage_assignments_editor_with_substages(levels: List[str], team_membe
             }
             
             # Substages Section
-            st.markdown("#### 🔧 Substages")
-            
+        
             # Add new substage button
             if st.button(f"➕ Add Substage", key=f"add_substage_{i}"):
                 if f"new_substage_{i}" not in st.session_state:
@@ -687,7 +684,7 @@ def _handle_substage_completion(project, stage_index, substage_index, completed)
                 substages[substage_index]["completed_at"] = ""
             
             # Update project in database
-            from .backend import update_project_substage_in_db
+            from backend.projects_backend import update_project_substage_in_db
             update_project_substage_in_db(project_id, stage_index, substage_index, completed)
 
 
