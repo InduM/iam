@@ -26,9 +26,9 @@ from .project_helpers import (
     _send_stage_assignment_change_notifications,
 )
 
-# UPDATED FUNCTION: Enhanced create project handler with date validation
+# UPDATED FUNCTION: Enhanced create project handler with substage completion reset
 def _handle_create_project(name, client, description, start, due):
-    """Handle project creation with enhanced date validation"""
+    """Handle project creation with enhanced date validation, complete reset, and substage completion clearing"""
     if not validate_project_dates(start, due):
         st.error("Cannot submit: Due date must be later than the start date.")
     elif not name or not client:
@@ -48,6 +48,10 @@ def _handle_create_project(name, client, description, start, due):
         
         new_proj = create_project_data(name, client, description, start, due)
         
+        # ENHANCED: Ensure new project has clean substage completion data
+        new_proj["substage_completion"] = {}
+        new_proj["substage_timestamps"] = {}
+        
         project_id = save_project_to_db(new_proj)
         if project_id:
             new_proj["id"] = project_id
@@ -60,11 +64,15 @@ def _handle_create_project(name, client, description, start, due):
             # Send stage assignment notifications
             send_stage_assignment_notifications(new_proj)
             
-            # Reset form state and navigate back
-            _reset_create_form_state()
-            
+            # Add project to manager
             add_project_to_manager(st.session_state.get("username", ""), name)
             
+            # ENHANCED: Complete form state reset including substages and completion data
+            _reset_create_form_state()
+            clear_substage_completion_data()
+            
+            # Navigate back to dashboard
+            st.session_state.view = "dashboard"
             st.rerun()
 
 # UPDATED FUNCTION: Enhanced save project handler with date validation
@@ -825,3 +833,107 @@ def enhanced_validate_stage_substage_dates_detailed(stage_assignments, project_d
         display_deadline_conflicts(conflicts)
     
     return len(errors) == 0, errors, conflicts
+
+# UPDATED FUNCTION: Enhanced form state reset with substage completion clearing
+def _reset_create_form_state():
+    """Reset all create form state including stage assignments, substages, and completion data"""
+    # Reset basic form fields
+    if "selected_template" in st.session_state:
+        st.session_state.selected_template = ""
+    if "custom_levels" in st.session_state:
+        st.session_state.custom_levels = []
+    
+    # Reset stage assignments and substages completely
+    st.session_state.stage_assignments = {}
+    
+    # ENHANCED: Clear substage completion data
+    if "substage_completion" in st.session_state:
+        st.session_state.substage_completion = {}
+    if "substage_timestamps" in st.session_state:
+        st.session_state.substage_timestamps = {}
+    
+    # Reset any substage-related states
+    substage_keys = [key for key in st.session_state.keys() if key.startswith("substage_")]
+    for key in substage_keys:
+        del st.session_state[key]
+    
+    # Reset any assignment-related states
+    assignment_keys = [key for key in st.session_state.keys() if "assignment" in key.lower()]
+    for key in assignment_keys:
+        del st.session_state[key]
+    
+    # Reset any deadline-related states
+    deadline_keys = [key for key in st.session_state.keys() if "deadline" in key.lower()]
+    for key in deadline_keys:
+        del st.session_state[key]
+    
+    # ENHANCED: Clear completion tracking states
+    completion_keys = [key for key in st.session_state.keys() if "completion" in key.lower()]
+    for key in completion_keys:
+        del st.session_state[key]
+    
+    # Reset view tracking
+    st.session_state.last_view = None
+
+# UPDATED FUNCTION: Enhanced form initialization with substage completion defaults
+def initialize_create_form_state():
+    """Initialize create form state with all necessary defaults including substage completion"""
+    # Initialize basic form state
+    if "selected_template" not in st.session_state:
+        st.session_state.selected_template = ""
+    if "custom_levels" not in st.session_state:
+        st.session_state.custom_levels = []
+    if "stage_assignments" not in st.session_state:
+        st.session_state.stage_assignments = {}
+    
+    # ENHANCED: Initialize substage completion tracking
+    if "substage_completion" not in st.session_state:
+        st.session_state.substage_completion = {}
+    if "substage_timestamps" not in st.session_state:
+        st.session_state.substage_timestamps = {}
+    
+    # Ensure clean state when switching to create view
+    if st.session_state.get("last_view") != "create":
+        _reset_create_form_state()
+        st.session_state.last_view = "create"
+
+# NEW FUNCTION: Clear substage completion data specifically
+def clear_substage_completion_data():
+    """Clear all substage completion data from session state"""
+    # Clear completion tracking
+    st.session_state.substage_completion = {}
+    st.session_state.substage_timestamps = {}
+    
+    # Clear any completion-related session state keys
+    completion_keys = [
+        key for key in st.session_state.keys() 
+        if any(term in key.lower() for term in ["substage_complete", "completion", "substage_check"])
+    ]
+    
+    for key in completion_keys:
+        if isinstance(st.session_state[key], dict):
+            st.session_state[key].clear()
+        else:
+            del st.session_state[key]
+
+# NEW FUNCTION: Initialize project with empty substage completion
+def initialize_empty_project_substages(project_levels, stage_assignments):
+    """Initialize a new project with empty substage completion data"""
+    substage_completion = {}
+    substage_timestamps = {}
+    
+    if stage_assignments:
+        for stage_idx in range(len(project_levels)):
+            stage_key = str(stage_idx)
+            if stage_key in stage_assignments:
+                substages = stage_assignments[stage_key].get("substages", [])
+                if substages:
+                    # Initialize all substages as incomplete
+                    substage_completion[stage_key] = {}
+                    substage_timestamps[stage_key] = {}
+                    for substage_idx in range(len(substages)):
+                        substage_completion[stage_key][str(substage_idx)] = False
+                        substage_timestamps[stage_key][str(substage_idx)] = None
+    
+    return substage_completion, substage_timestamps
+

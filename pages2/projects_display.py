@@ -35,15 +35,22 @@ def render_project_card(project, index):
     pid = project.get("id", f"auto_{index}")
     
     with st.expander(f"{project.get('name', 'Unnamed')}"):
+        # Mobile-first layout with better spacing
         st.markdown(f"**Client:** {project.get('client', '-')}")
         st.markdown(f"**Description:** {project.get('description', '-')}")
-        st.markdown(f"**Start Date:** {project.get('startDate', '-')}")
-        st.markdown(f"**Due Date:** {project.get('dueDate', '-')}")
-        st.markdown(f"**Manager/Lead:** {project.get('created_by', '-')}")
+        
+        # Date information in mobile-friendly format
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**Start:** {project.get('startDate', '-')}")
+        with col2:
+            st.markdown(f"**Due:** {project.get('dueDate', '-')}")
+        
+        st.markdown(f"**Manager:** {project.get('created_by', '-')}")
         
         levels = project.get("levels", ["Initial", "Invoice", "Payment"])
         current_level = project.get("level", -1)
-        st.markdown(f"**Current Level:** {format_level(current_level, levels)}")
+        st.markdown(f"**📊 Current Level:** {format_level(current_level, levels)}")
         
         # Show stage assignments summary
         stage_assignments = project.get("stage_assignments", {})
@@ -51,36 +58,31 @@ def render_project_card(project, index):
         # Show substage completion summary
         render_substage_summary_widget(project)
         
-        # Show overdue stages for this project - FIXED: Filter out completed stages
+        # Mobile-optimized overdue stages display
         overdue_stages = get_overdue_stages(stage_assignments, levels, current_level)
         if overdue_stages:
-            # Filter out overdue stages that are already completed
             active_overdue_stages = []
             for overdue in overdue_stages:
-                # Extract stage index from stage name or find matching stage
                 stage_index = None
                 for i, level in enumerate(levels):
                     if level == overdue.get('stage_name') or overdue.get('stage_name') == f"Stage {i+1}":
                         stage_index = i
                         break
                 
-                # Only show as overdue if the stage is not yet completed
                 if stage_index is not None and stage_index > current_level:
                     active_overdue_stages.append(overdue)
             
-            # Only display overdue section if there are active overdue stages
             if active_overdue_stages:
                 st.error("🔴 **Overdue Stages:**")
                 for overdue in active_overdue_stages:
-                    st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue")
+                    # Mobile-friendly overdue display
+                    st.error(f"📍 {overdue['stage_name']}: {overdue['days_overdue']} days")
         
-        # Level checkboxes with substages and validation
+        # Level checkboxes with mobile optimization
         def on_change_dashboard(new_index, proj_id=pid, proj=project):
-            # Validate substages before allowing stage change
             if new_index > project.get("level", -1):
-                # Check if all substages are complete for the new stage
                 if not _are_all_substages_complete(project, stage_assignments, new_index):
-                    st.error("❌ Cannot advance to this stage - complete all substages first!")
+                    st.error("❌ Complete all substages first!")
                     return
             
             _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments)
@@ -88,17 +90,16 @@ def render_project_card(project, index):
         # Check for success messages
         _check_dashboard_success_messages(pid)
         
-        # Check for auto-advance success messages
+        # Auto-advance and auto-uncheck messages
         for i in range(len(levels)):
             auto_advance_key = f"auto_advance_success_{pid}_{i}"
             if st.session_state.get(auto_advance_key, False):
-                st.success(f"🎉 Stage {i + 1} automatically completed!")
+                st.success(f"🎉 Stage {i + 1} completed!")
                 st.session_state[auto_advance_key] = False
             
-            # Check for auto-uncheck success messages
             auto_uncheck_key = f"auto_uncheck_success_{pid}_{i}"
             if st.session_state.get(auto_uncheck_key, False):
-                st.warning(f"⚠️ Stage {i + 1} automatically unchecked!")
+                st.warning(f"⚠️ Stage {i + 1} unchecked!")
                 st.session_state[auto_uncheck_key] = False
         
         render_level_checkboxes_with_substages(
@@ -110,10 +111,9 @@ def render_project_card(project, index):
         # Email reminder logic
         _handle_email_reminders(project, pid, levels, current_level)
         
-        # Action buttons
+        # Mobile-friendly action buttons
         _render_project_action_buttons(project, pid)
 
-        
 def render_level_checkboxes_with_substages(context, project_id, current_level, timestamps, levels, 
                                          on_change, editable=False, stage_assignments=None, project=None):
     """

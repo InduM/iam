@@ -1,8 +1,7 @@
 import streamlit as st
-from datetime import datetime, date, timedelta
-from typing import List, Dict, Any
+from datetime import datetime, date
+from typing import List, Dict
 import yagmail
-from backend.projects_backend import update_substage_completion_in_db
 
 # ───── Constants ─────
 TEMPLATES = {

@@ -1,6 +1,6 @@
 import streamlit as st
-from datetime import datetime, date, timedelta
-from typing import List, Dict, Any
+from datetime import datetime, date
+from typing import List, Dict
 from backend.projects_backend import update_substage_completion_in_db
 
 def render_stage_assignments_editor_with_substages(levels: List[str], team_members: List[str], 

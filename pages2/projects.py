@@ -15,7 +15,9 @@ from .projects_display import (
 from .project_logic import (
     _handle_create_project,
     _handle_save_project,
-    _handle_level_change_edit
+    _handle_level_change_edit,
+    _reset_create_form_state,
+    initialize_create_form_state
 )
 from .project_helpers import (
     _check_edit_success_messages
@@ -28,6 +30,10 @@ def run():
     # Initialize session state
     initialize_session_state()
     
+    if "last_view" not in st.session_state:
+        st.session_state.last_view = None
+
+
     # Load projects from database on first run or when explicitly refreshed
     if "projects" not in st.session_state or st.session_state.get("refresh_projects", False):
         st.session_state.projects = load_projects_from_db()
@@ -80,30 +86,40 @@ def show_dashboard():
         render_project_card(project, i)
 
 def show_create_form():
-    """Display the create project form with substage support"""
+    """Display the create project form with substage support and proper field reset"""
     st.title("🛠 Create Project")
     
+    # ENHANCED: Proper form state initialization and reset
+    initialize_create_form_state()
+
     # Back button
     _render_back_button()
     
     # Template selection
     template_options = ["Custom Template"] + list(TEMPLATES.keys())
-    selected = st.selectbox("Select Template (optional)", template_options)
+    selected = st.selectbox("Select Template (optional)", template_options, 
+                           index=0 if not st.session_state.selected_template else None)
     
     if selected != "Custom Template":
+        # If template changed, reset stage assignments
+        if st.session_state.selected_template != selected:
+            st.session_state.stage_assignments = {}
         st.session_state.selected_template = selected
     else:
+        # If switching to custom, reset everything
+        if st.session_state.selected_template:
+            st.session_state.stage_assignments = {}
         st.session_state.selected_template = ""
     
-    # Form fields
-    name = st.text_input("Project Name")
+    # Form fields (these will be empty on new project)
+    name = st.text_input("Project Name", value="")  # Explicit empty value
     clients = get_all_clients()
     if not clients:
         st.warning("⚠ No clients found in the database.")
-    client = st.selectbox("Client", options=clients)
-    description = st.text_area("Project Description")
-    start = st.date_input("Start Date")
-    due = st.date_input("Due Date")
+    client = st.selectbox("Client", options=[""] + clients, index=0)  # Start with empty selection
+    description = st.text_area("Project Description", value="")  # Explicit empty value
+    start = st.date_input("Start Date", value=date.today())  # Default to today
+    due = st.date_input("Due Date", value=date.today())  # Default to today
     
     # Handle template levels
     if st.session_state.selected_template:
@@ -140,7 +156,8 @@ def show_create_form():
     # Create button
     if st.button("✅ Create Project"):
         _handle_create_project(name, client, description, start, due)
-        
+
+
 def show_edit_form():
     """Display the edit project form with substage support (no substage summary)"""
     st.title("✏ Edit Project")
@@ -167,10 +184,14 @@ def show_edit_form():
     if not clients:
         st.warning("⚠ No clients found in the database.")
     
+    # Client dropdown with safe default
     current_client = project.get("client", "")
-    client_index = clients.index(current_client) if current_client in clients else 0
-    client = st.selectbox("Client", options=clients, index=client_index)
-    
+    if current_client in clients:
+        client = st.selectbox("Client", options=clients, index=clients.index(current_client))
+    else:
+        st.warning(f"⚠ Current client '{current_client}' not found in client list. Please select a new client.")
+        client = st.selectbox("Client", options=clients)
+
     description = st.text_area("Project Description", value=project.get("description", ""))
     start = st.date_input("Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
     due = st.date_input("Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
@@ -276,3 +297,35 @@ def _apply_filters(projects, search_query, filter_template, filter_level, filter
         ]
     
     return filtered_projects
+
+# NEW FUNCTION: Clean navigation state
+def _clean_navigation_state():
+    """Clean up navigation-related session state"""
+    navigation_keys = [
+        "edit_project_id", "confirm_delete", "level_update_success",
+        "edit_level_update_success", "auto_advance_success", 
+        "auto_uncheck_success", "project_completed_message"
+    ]
+    
+    for key in navigation_keys:
+        if key in st.session_state:
+            if isinstance(st.session_state[key], dict):
+                st.session_state[key].clear()
+            else:
+                del st.session_state[key]
+
+# NEW FUNCTION: Reset all project-related state
+def reset_all_project_state():
+    """Reset all project-related session state for clean slate"""
+    # Reset form states
+    _reset_create_form_state()
+    
+    # Clean navigation state
+    _clean_navigation_state()
+    
+    # Reset view
+    st.session_state.view = "dashboard"
+    st.session_state.last_view = None
+    
+    # Force projects refresh
+    st.session_state.refresh_projects = True
