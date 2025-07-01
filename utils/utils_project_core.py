@@ -179,6 +179,7 @@ def validate_stage_assignments(stage_assignments: Dict, levels: List[str]) -> Li
 def get_overdue_stages(stage_assignments: Dict, levels: List[str], current_level: int) -> List[Dict]:
     """
     Get list of overdue stages based on deadlines
+    Fixed to exclude completed stages from overdue calculations
     """
     overdue_stages = []
     
@@ -186,13 +187,15 @@ def get_overdue_stages(stage_assignments: Dict, levels: List[str], current_level
         try:
             stage_index = int(stage_key)
             
-            # Only check stages that should be completed by now
-            if stage_index <= current_level and assignment.get("deadline"):
+            # FIXED: Only check stages that are NOT yet completed (stage_index > current_level)
+            # and have deadlines that have passed
+            if stage_index > current_level and assignment.get("deadline"):
                 deadline_str = assignment["deadline"]
                 try:
                     deadline_date = date.fromisoformat(deadline_str)
                     days_overdue = (date.today() - deadline_date).days
                     
+                    # Only consider it overdue if the deadline has passed (days_overdue > 0)
                     if days_overdue > 0:
                         stage_name = assignment.get("stage_name", levels[stage_index] if stage_index < len(levels) else f"Stage {stage_index + 1}")
                         overdue_stages.append({
