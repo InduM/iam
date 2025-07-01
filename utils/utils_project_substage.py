@@ -348,29 +348,60 @@ def handle_substage_completion(project, stage_index, substage_index, completed):
         substages = stage_assignments[stage_key]["substages"]
         
         if substage_index < len(substages):
+            # Update substage completion in project data
+            if "substage_completion" not in project:
+                project["substage_completion"] = {}
+            if stage_key not in project["substage_completion"]:
+                project["substage_completion"][stage_key] = {}
+            
+            project["substage_completion"][stage_key][str(substage_index)] = completed
+            
+            # Update substage object as well for backward compatibility
             substages[substage_index]["completed"] = completed
             
             if completed:
-                substages[substage_index]["completed_at"] = datetime.now().isoformat()
+                completion_time = datetime.now().isoformat()
+                substages[substage_index]["completed_at"] = completion_time
+                
+                # Store timestamp for summary display
+                if "substage_timestamps" not in project:
+                    project["substage_timestamps"] = {}
+                if stage_key not in project["substage_timestamps"]:
+                    project["substage_timestamps"][stage_key] = {}
+                project["substage_timestamps"][stage_key][str(substage_index)] = completion_time
+                
                 # Send notification to assigned members
                 substage_name = substages[substage_index]["name"]
                 project_name = project.get("name", "")
-                assigned_members = substages[substage_index].get("assigned_members", [])
+                assigned_members = substages[substage_index].get("assignees", [])
                 
                 if assigned_members:
                     # In a real implementation, send email notifications
                     pass
             else:
                 substages[substage_index]["completed_at"] = ""
+                # Remove timestamp
+                if "substage_timestamps" in project and stage_key in project["substage_timestamps"]:
+                    project["substage_timestamps"][stage_key].pop(str(substage_index), None)
             
             # Update project in database
             from backend.projects_backend import update_project_substage_in_db
             update_project_substage_in_db(project_id, stage_index, substage_index, completed)
+            
+            # Update substage completion in database
+            update_substage_completion_in_db(project_id, project["substage_completion"])
+            
+            # Trigger UI refresh
+            st.rerun()
 
-def get_substage_completion_stats(stage_assignments: Dict) -> Dict:
+
+def get_substage_completion_stats(project: Dict) -> Dict:
     """
-    Get comprehensive substage completion statistics
+    Get comprehensive substage completion statistics from project data
     """
+    stage_assignments = project.get("stage_assignments", {})
+    substage_completion = project.get("substage_completion", {})
+    
     stats = {
         "total_substages": 0,
         "completed_substages": 0,
@@ -378,7 +409,8 @@ def get_substage_completion_stats(stage_assignments: Dict) -> Dict:
         "today_due_substages": 0,
         "upcoming_substages": 0,
         "by_priority": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0},
-        "by_stage": {}
+        "by_stage": {},
+        "completion_rate": 0
     }
     
     for stage_key, stage_data in stage_assignments.items():
@@ -391,16 +423,21 @@ def get_substage_completion_stats(stage_assignments: Dict) -> Dict:
         }
         
         substages = stage_data.get("substages", [])
+        stage_completion = substage_completion.get(stage_key, {})
+        
         stats["total_substages"] += len(substages)
         stage_stats["total"] = len(substages)
         
-        for substage in substages:
+        for substage_idx, substage in enumerate(substages):
             # Count by priority
             priority = substage.get("priority", "Medium")
             if priority in stats["by_priority"]:
                 stats["by_priority"][priority] += 1
             
-            if substage.get("completed", False):
+            # Check real-time completion status
+            is_completed = stage_completion.get(str(substage_idx), False)
+            
+            if is_completed:
                 stats["completed_substages"] += 1
                 stage_stats["completed"] += 1
             else:
@@ -424,11 +461,16 @@ def get_substage_completion_stats(stage_assignments: Dict) -> Dict:
         
         stats["by_stage"][stage_name] = stage_stats
     
+    # Calculate completion rate
+    if stats["total_substages"] > 0:
+        stats["completion_rate"] = (stats["completed_substages"] / stats["total_substages"]) * 100
+    
     return stats
 
-def render_substage_summary_widget(project: Dict):
+def render_substage_summary_widget(project: Dict, force_refresh: bool = False):
     """
     Render a summary widget showing substage completion across all stages
+    Updates immediately when substages are modified
     """
     stage_assignments = project.get("stage_assignments", {})
     
@@ -439,17 +481,26 @@ def render_substage_summary_widget(project: Dict):
     completed_substages = 0
     overdue_substages = 0
     
+    # Get real-time substage completion data
+    substage_completion = project.get("substage_completion", {})
+    
     # Calculate overall substage statistics
     for stage_key, stage_data in stage_assignments.items():
         substages = stage_data.get("substages", [])
         total_substages += len(substages)
         
-        for substage in substages:
-            if substage.get("completed", False):
+        # Get completion status for this stage
+        stage_completion = substage_completion.get(stage_key, {})
+        
+        for substage_idx, substage in enumerate(substages):
+            # Check if this specific substage is completed
+            is_completed = stage_completion.get(str(substage_idx), False)
+            
+            if is_completed:
                 completed_substages += 1
             
-            # Check if overdue
-            if not substage.get("completed", False) and substage.get("deadline"):
+            # Check if overdue (only for incomplete substages)
+            if not is_completed and substage.get("deadline"):
                 try:
                     deadline_date = date.fromisoformat(substage["deadline"])
                     if deadline_date < date.today():
@@ -464,18 +515,32 @@ def render_substage_summary_widget(project: Dict):
         
         with col1:
             completion_rate = (completed_substages / total_substages) * 100
-            st.metric("Completion Rate", f"{completion_rate:.1f}%", f"{completed_substages}/{total_substages}")
+            st.metric(
+                "Completion Rate", 
+                f"{completion_rate:.1f}%", 
+                f"{completed_substages}/{total_substages}"
+            )
         
         with col2:
             if overdue_substages > 0:
-                st.metric("⚠️ Overdue", overdue_substages, delta=f"-{overdue_substages}", delta_color="inverse")
+                st.metric(
+                    "⚠️ Overdue", 
+                    overdue_substages, 
+                    delta=f"-{overdue_substages}", 
+                    delta_color="inverse"
+                )
             else:
-                st.metric("✅ On Track", "All substages", delta="0 overdue", delta_color="normal")
+                st.metric(
+                    "✅ On Track", 
+                    "All substages", 
+                    delta="0 overdue", 
+                    delta_color="normal"
+                )
         
         with col3:
             pending_substages = total_substages - completed_substages
             st.metric("Pending", pending_substages)
-
+            
 def get_substage_overdue_list(stage_assignments: Dict) -> List[Dict]:
     """
     Get list of overdue substages across all stages
@@ -592,6 +657,7 @@ def render_substage_assignments_editor(levels: List[str], team_members: List[str
     return updated_assignments
 
 def render_substage_progress_with_edit(project, project_id, stage_index, substages, editable=False):
+
     """
     Render substage progress with real-time editing capability
     """
@@ -646,8 +712,8 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                 # Update in database immediately
                 update_substage_completion_in_db(project_id, project["substage_completion"])
                 
-                # Show immediate feedback
-                st.session_state[f"substage_update_success_{project_id}_{stage_index}_{substage_idx}"] = True
+                # Force a rerun to update the summary widget
+                st.rerun()
         else:
             # Read-only display
             status = "✅" if is_completed else "⏳"
@@ -664,10 +730,76 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                         st.caption(f"    Completed: {dt.strftime('%Y-%m-%d %H:%M')}")
                     except:
                         st.caption(f"    Completed: {timestamp}")
+
+
+def get_real_time_substage_stats(project: Dict) -> Dict:
+    """
+    Get real-time substage completion statistics from project data
+    """
+    stage_assignments = project.get("stage_assignments", {})
+    substage_completion = project.get("substage_completion", {})
     
-    # Show success message for substage updates
-    for substage_idx in range(len(substages)):
-        success_key = f"substage_update_success_{project_id}_{stage_index}_{substage_idx}"
-        if st.session_state.get(success_key, False):
-            st.success("Substage status updated!")
-            st.session_state[success_key] = False
+    stats = {
+        "total_substages": 0,
+        "completed_substages": 0,
+        "overdue_substages": 0,
+        "today_due_substages": 0,
+        "upcoming_substages": 0,
+        "by_priority": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0},
+        "by_stage": {},
+        "completion_rate": 0
+    }
+    
+    for stage_key, stage_data in stage_assignments.items():
+        stage_name = stage_data.get("stage_name", f"Stage {int(stage_key) + 1}")
+        stage_stats = {
+            "total": 0,
+            "completed": 0,
+            "overdue": 0,
+            "pending": 0
+        }
+        
+        substages = stage_data.get("substages", [])
+        stage_completion = substage_completion.get(stage_key, {})
+        
+        stats["total_substages"] += len(substages)
+        stage_stats["total"] = len(substages)
+        
+        for substage_idx, substage in enumerate(substages):
+            # Count by priority
+            priority = substage.get("priority", "Medium")
+            if priority in stats["by_priority"]:
+                stats["by_priority"][priority] += 1
+            
+            # Check real-time completion status
+            is_completed = stage_completion.get(str(substage_idx), False)
+            
+            if is_completed:
+                stats["completed_substages"] += 1
+                stage_stats["completed"] += 1
+            else:
+                stage_stats["pending"] += 1
+                
+                # Check deadline status for incomplete substages
+                if substage.get("deadline"):
+                    try:
+                        deadline_date = date.fromisoformat(substage["deadline"])
+                        days_until = (deadline_date - date.today()).days
+                        
+                        if days_until < 0:
+                            stats["overdue_substages"] += 1
+                            stage_stats["overdue"] += 1
+                        elif days_until == 0:
+                            stats["today_due_substages"] += 1
+                        elif days_until <= 7:
+                            stats["upcoming_substages"] += 1
+                    except:
+                        pass
+        
+        stats["by_stage"][stage_name] = stage_stats
+    
+    # Calculate completion rate
+    if stats["total_substages"] > 0:
+        stats["completion_rate"] = (stats["completed_substages"] / stats["total_substages"]) * 100
+    
+    return stats
