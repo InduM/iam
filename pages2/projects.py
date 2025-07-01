@@ -8,18 +8,16 @@ from backend.projects_backend import *
 from utils.utils_project_core import *
 from utils.utils_project_substage import *
 
-from projects_display import (
+from .projects_display import (
     render_project_card, render_level_checkboxes_with_substages,
     render_custom_levels_editor, render_progress_section
 )
-from project_logic import (
+from .project_logic import (
     _handle_create_project,
     _handle_save_project,
-    _handle_level_change_dashboard,
     _handle_level_change_edit
 )
-from project_helpers import (
-    _check_dashboard_success_messages,
+from .project_helpers import (
     _check_edit_success_messages
 )
 
@@ -144,7 +142,7 @@ def show_create_form():
         _handle_create_project(name, client, description, start, due)
         
 def show_edit_form():
-    """Display the edit project form with substage support"""
+    """Display the edit project form with substage support (no substage summary)"""
     st.title("✏ Edit Project")
     
     # Back button
@@ -195,9 +193,6 @@ def show_edit_form():
             for issue in assignment_issues:
                 st.warning(f"⚠️ {issue}")
     
-    # Show substage completion summary
-    render_substage_summary_widget(project)
-    
     # Show overdue stages
     overdue_stages = get_overdue_stages(
         current_stage_assignments, 
@@ -228,6 +223,7 @@ def show_edit_form():
     # Save button
     if st.button("💾 Save"):
         _handle_save_project(pid, project, name, client, description, start, due, original_team, original_name, stage_assignments)
+
 def _render_back_button():
     """Render back button with styling"""
     st.markdown(

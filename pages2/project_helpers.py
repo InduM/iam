@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from utils.utils_project_core import send_stage_assignment_email
 from backend.projects_backend import update_client_project_count
 
@@ -20,7 +20,6 @@ def create_project_data(name, client, description, start, due):
         "updated_at": datetime.now().isoformat(),
         "created_by": st.session_state.get("username", "unknown"),
     }
-
 
 def create_updated_project_data(project, name, client, description, start, due, stage_assignments):
     """Create updated project data dictionary including substage data"""
