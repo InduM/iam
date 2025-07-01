@@ -1,6 +1,6 @@
 import streamlit as st
 import time
-from datetime import datetime, date, timedelta
+from datetime import date
 from typing import List
 
 # Import functions from backend and utils
@@ -12,13 +12,15 @@ from projects_display import (
     render_project_card, render_level_checkboxes_with_substages,
     render_custom_levels_editor, render_progress_section
 )
-from projects_logic import (
-    handle_create_project, handle_save_project,
-    handle_level_change_dashboard, handle_level_change_edit
+from project_logic import (
+    _handle_create_project,
+    _handle_save_project,
+    _handle_level_change_dashboard,
+    _handle_level_change_edit
 )
-from projects_helpers import (
-    create_project_data, reset_create_form_state,
-    check_dashboard_success_messages
+from project_helpers import (
+    _check_dashboard_success_messages,
+    _check_edit_success_messages
 )
 
 

@@ -1,9 +1,29 @@
 import streamlit as st
+from datetime import datetime, time
+from utils.utils_project_core import (
+    format_level,
+    get_current_timestamp
+)
+from utils.utils_project_substage import (
+    render_substage_summary_widget,
+)
 from projects_logic import (
     are_all_substages_complete, auto_advance_main_stage,
-    auto_uncheck_main_stage
+    auto_uncheck_main_stage,
+    _handle_level_change_dashboard,
+    _handle_email_reminders,
+    _check_dashboard_success_messages,
+    _render_project_action_buttons,
+    _handle_project_deletion,
+    _check_edit_success_messages,
 )
-from projects_helpers import display_success_messages
+from projects_helpers import (
+    display_success_messages,
+    render_substage_summary_widget,
+    get_overdue_stages,
+    _are_all_substages_complete,
+    _has_substages,
+)
 
 
 def render_project_card(project, index):
