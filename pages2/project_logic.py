@@ -359,52 +359,6 @@ def _handle_project_deletion(pid, project):
     st.session_state.confirm_delete[f"confirm_delete_{pid}"] = False
     st.rerun()
 
-def validate_stage_substage_dates(stage_assignments, project_due_date):
-    """
-    Validate that all stage and substage due dates are <= project due date
-    AND substage deadlines are <= their parent stage deadline
-    Returns list of validation errors
-    """
-    errors = []
-    
-    if not stage_assignments or not project_due_date:
-        return errors
-    
-    for stage_key, stage_data in stage_assignments.items():
-        stage_name = stage_data.get("stage_name", f"Stage {stage_key}")
-        stage_deadline = None
-        
-        # Check main stage deadline
-        if "deadline" in stage_data and stage_data["deadline"]:
-            try:
-                stage_deadline = date.fromisoformat(stage_data["deadline"]) if isinstance(stage_data["deadline"], str) else stage_data["deadline"]
-                if stage_deadline > project_due_date:
-                    errors.append(f"Stage '{stage_name}' deadline ({stage_deadline}) cannot be after project due date ({project_due_date})")
-            except (ValueError, TypeError):
-                errors.append(f"Invalid deadline format for stage '{stage_name}'")
-                stage_deadline = None  # Reset to None if invalid
-        
-        # Check substage deadlines
-        substages = stage_data.get("substages", [])
-        for idx, substage in enumerate(substages):
-            if "deadline" in substage and substage["deadline"]:
-                try:
-                    substage_deadline = date.fromisoformat(substage["deadline"]) if isinstance(substage["deadline"], str) else substage["deadline"]
-                    substage_name = substage.get("name", f"Substage {idx + 1}")
-                    
-                    # Check against project due date
-                    if substage_deadline > project_due_date:
-                        errors.append(f"Substage '{substage_name}' in stage '{stage_name}' deadline ({substage_deadline}) cannot be after project due date ({project_due_date})")
-                    
-                    # Check against parent stage deadline (if stage has a deadline)
-                    if stage_deadline and substage_deadline > stage_deadline:
-                        errors.append(f"Substage '{substage_name}' deadline ({substage_deadline}) cannot be after its parent stage '{stage_name}' deadline ({stage_deadline})")
-                        
-                except (ValueError, TypeError):
-                    substage_name = substage.get("name", f"Substage {idx + 1}")
-                    errors.append(f"Invalid deadline format for substage '{substage_name}' in stage '{stage_name}'")
-    
-    return errors
 
 def auto_adjust_stage_dates(stage_assignments, old_due_date, new_due_date):
     """
@@ -793,8 +747,53 @@ def display_deadline_conflicts(conflicts):
             else:
                 st.error(f"  • {conflict['stage_name']} → {conflict['name']}: {conflict['deadline']}")
 
+def validate_stage_substage_dates(stage_assignments, project_due_date):
+    """
+    Validate that all stage and substage due dates are <= project due date
+    AND substage deadlines are <= their parent stage deadline
+    Returns list of validation errors
+    """
+    errors = []
+    
+    if not stage_assignments or not project_due_date:
+        return errors
+    
+    for stage_key, stage_data in stage_assignments.items():
+        stage_name = stage_data.get("stage_name", f"Stage {stage_key}")
+        stage_deadline = None
+        
+        # Check main stage deadline
+        if "deadline" in stage_data and stage_data["deadline"]:
+            try:
+                stage_deadline = date.fromisoformat(stage_data["deadline"]) if isinstance(stage_data["deadline"], str) else stage_data["deadline"]
+                if stage_deadline > project_due_date:
+                    errors.append(f"Stage '{stage_name}' deadline ({stage_deadline}) cannot be after project due date ({project_due_date})")
+            except (ValueError, TypeError):
+                errors.append(f"Invalid deadline format for stage '{stage_name}'")
+                stage_deadline = None  # Reset to None if invalid
+        
+        # Check substage deadlines
+        substages = stage_data.get("substages", [])
+        for idx, substage in enumerate(substages):
+            if "deadline" in substage and substage["deadline"]:
+                try:
+                    substage_deadline = date.fromisoformat(substage["deadline"]) if isinstance(substage["deadline"], str) else substage["deadline"]
+                    substage_name = substage.get("name", f"Substage {idx + 1}")
+                    
+                    # Check against project due date
+                    if substage_deadline > project_due_date:
+                        errors.append(f"Substage '{substage_name}' in stage '{stage_name}' deadline ({substage_deadline}) cannot be after project due date ({project_due_date})")
+                    
+                    # Check against parent stage deadline (if stage has a deadline)
+                    if stage_deadline and substage_deadline > stage_deadline:
+                        errors.append(f"Substage '{substage_name}' deadline ({substage_deadline}) cannot be after its parent stage '{stage_name}' deadline ({stage_deadline})")
+                        
+                except (ValueError, TypeError):
+                    substage_name = substage.get("name", f"Substage {idx + 1}")
+                    errors.append(f"Invalid deadline format for substage '{substage_name}' in stage '{stage_name}'")
+    
+    return errors
 
-# Integration function for use in your existing validation
 # FIXED FUNCTION: Enhanced validation that returns proper error list
 def enhanced_validate_stage_substage_dates(stage_assignments, project_due_date, display_conflicts=True):
     """
@@ -817,22 +816,6 @@ def enhanced_validate_stage_substage_dates(stage_assignments, project_due_date, 
     # Return just the errors list for backward compatibility
     return errors
 
-# ALTERNATIVE: Enhanced version that returns tuple (if you want to update calling code)
-def enhanced_validate_stage_substage_dates_detailed(stage_assignments, project_due_date, display_conflicts=True):
-    """
-    Enhanced validation that includes substage vs stage deadline checking
-    Can optionally display conflicts in Streamlit UI
-    
-    Returns:
-        tuple: (is_valid, list_of_errors, conflicts_summary)
-    """
-    errors = validate_stage_substage_dates(stage_assignments, project_due_date)
-    conflicts = get_deadline_conflicts_summary(stage_assignments, project_due_date)
-    
-    if display_conflicts and errors:
-        display_deadline_conflicts(conflicts)
-    
-    return len(errors) == 0, errors, conflicts
 
 # UPDATED FUNCTION: Enhanced form state reset with substage completion clearing
 def _reset_create_form_state():

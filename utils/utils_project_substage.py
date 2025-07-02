@@ -3,10 +3,10 @@ from datetime import datetime, date
 from typing import List, Dict
 from backend.projects_backend import update_substage_completion_in_db
 
-def render_stage_assignments_editor_with_substages(levels: List[str], team_members: List[str], 
+def render_substage_assignments_editor(levels: List[str], team_members: List[str], 
                                                  current_assignments: Dict = None) -> Dict:
     """
-    Enhanced stage assignment editor with full substage support - Fixed version
+    Enhanced stage assignment editor with full substage support - Fixed version with default value validation
     """    
     if current_assignments is None:
         current_assignments = {}
@@ -40,11 +40,15 @@ def render_stage_assignments_editor_with_substages(levels: List[str], team_membe
             col1, col2 = st.columns([2, 1])
             
             with col1:
-                # Assign team members to stage
+                # Assign team members to stage - Fix default values
+                current_members = current_stage.get("members", [])
+                # Filter out members that don't exist in current team_members list
+                valid_current_members = [member for member in current_members if member in team_members]
+                
                 assigned_members = st.multiselect(
                     f"Assign Team Members",
                     options=team_members,
-                    default=current_stage.get("members", []),
+                    default=valid_current_members,
                     key=f"stage_{i}_members"
                 )
             
@@ -95,9 +99,12 @@ def render_stage_assignments_editor_with_substages(levels: List[str], team_membe
                         with substage_col1:
                             new_substage_name = st.text_input("Substage Name")
                             new_substage_desc = st.text_area("Description (optional)")
+                            
+                            # Use assigned members if available, otherwise use all team members
+                            available_members = assigned_members if assigned_members else team_members
                             new_substage_assignees = st.multiselect(
                                 "Assign to Team Members",
-                                options=assigned_members if assigned_members else team_members
+                                options=available_members
                             )
                         
                         with substage_col2:
@@ -178,10 +185,15 @@ def render_stage_assignments_editor_with_substages(levels: List[str], team_membe
                                 key=f"edit_desc_{substage_key}"
                             )
                             
+                            # Fix substage assignee defaults - filter invalid assignees
+                            current_assignees = substage.get("assignees", [])
+                            available_members = assigned_members if assigned_members else team_members
+                            valid_assignees = [assignee for assignee in current_assignees if assignee in available_members]
+                            
                             updated_assignees = st.multiselect(
                                 "Assigned to",
-                                options=assigned_members if assigned_members else team_members,
-                                default=substage.get("assignees", []),
+                                options=available_members,
+                                default=valid_assignees,
                                 key=f"edit_assignees_{substage_key}"
                             )
                         
@@ -262,6 +274,7 @@ def render_stage_assignments_editor_with_substages(levels: List[str], team_membe
         stage_assignments[stage_key]["substages"] = st.session_state.stage_substages[stage_key].copy()
     
     return stage_assignments
+
 
 def render_substage_progress(project: Dict, stage_index: int, substages: List[Dict], editable: bool = False):
     """
@@ -394,78 +407,6 @@ def handle_substage_completion(project, stage_index, substage_index, completed):
             # Trigger UI refresh
             st.rerun()
 
-
-def get_substage_completion_stats(project: Dict) -> Dict:
-    """
-    Get comprehensive substage completion statistics from project data
-    """
-    stage_assignments = project.get("stage_assignments", {})
-    substage_completion = project.get("substage_completion", {})
-    
-    stats = {
-        "total_substages": 0,
-        "completed_substages": 0,
-        "overdue_substages": 0,
-        "today_due_substages": 0,
-        "upcoming_substages": 0,
-        "by_priority": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0},
-        "by_stage": {},
-        "completion_rate": 0
-    }
-    
-    for stage_key, stage_data in stage_assignments.items():
-        stage_name = stage_data.get("stage_name", f"Stage {int(stage_key) + 1}")
-        stage_stats = {
-            "total": 0,
-            "completed": 0,
-            "overdue": 0,
-            "pending": 0
-        }
-        
-        substages = stage_data.get("substages", [])
-        stage_completion = substage_completion.get(stage_key, {})
-        
-        stats["total_substages"] += len(substages)
-        stage_stats["total"] = len(substages)
-        
-        for substage_idx, substage in enumerate(substages):
-            # Count by priority
-            priority = substage.get("priority", "Medium")
-            if priority in stats["by_priority"]:
-                stats["by_priority"][priority] += 1
-            
-            # Check real-time completion status
-            is_completed = stage_completion.get(str(substage_idx), False)
-            
-            if is_completed:
-                stats["completed_substages"] += 1
-                stage_stats["completed"] += 1
-            else:
-                stage_stats["pending"] += 1
-                
-                # Check deadline status for incomplete substages
-                if substage.get("deadline"):
-                    try:
-                        deadline_date = date.fromisoformat(substage["deadline"])
-                        days_until = (deadline_date - date.today()).days
-                        
-                        if days_until < 0:
-                            stats["overdue_substages"] += 1
-                            stage_stats["overdue"] += 1
-                        elif days_until == 0:
-                            stats["today_due_substages"] += 1
-                        elif days_until <= 7:
-                            stats["upcoming_substages"] += 1
-                    except:
-                        pass
-        
-        stats["by_stage"][stage_name] = stage_stats
-    
-    # Calculate completion rate
-    if stats["total_substages"] > 0:
-        stats["completion_rate"] = (stats["completed_substages"] / stats["total_substages"]) * 100
-    
-    return stats
 
 def render_substage_summary_widget(project: Dict, force_refresh: bool = False):
     """
@@ -601,60 +542,46 @@ def get_substage_upcoming_deadlines(stage_assignments: Dict, days_ahead: int = 7
     
     return sorted(upcoming_substages, key=lambda x: x["days_until"])
 
-def render_substage_assignments_editor(levels: List[str], team_members: List[str], stage_assignments: Dict = None):
+
+def validate_multiselect_defaults(default_values: List, available_options: List) -> List:
     """
-    Render stage assignments editor
+    Utility function to validate and filter default values for multiselect widgets
+    
+    Args:
+        default_values: List of default values to validate
+        available_options: List of available options
+    
+    Returns:
+        List of valid default values that exist in available_options
     """
-    if stage_assignments is None:
-        stage_assignments = {}
+    if not default_values:
+        return []
     
-    st.subheader("📋 Stage Assignments")
-    st.markdown("Assign team members and deadlines for each project stage:")
+    return [value for value in default_values if value in available_options]
+
+def safe_multiselect(label: str, options: List, default: List = None, key: str = None, **kwargs):
+    """
+    Safe wrapper for st.multiselect that automatically validates default values
     
-    updated_assignments = {}
+    Args:
+        label: Label for the multiselect widget
+        options: List of available options
+        default: List of default values (will be filtered for validity)
+        key: Unique key for the widget
+        **kwargs: Additional arguments to pass to st.multiselect
     
-    for i, stage in enumerate(levels):
-        with st.expander(f"Stage {i+1}: {stage}", expanded=False):
-            col1, col2 = st.columns([2, 1])
-            
-            # Get current assignment if exists
-            current_assignment = stage_assignments.get(str(i), {})
-            current_members = current_assignment.get('members', [])
-            current_deadline = current_assignment.get('deadline', '')
-            
-            with col1:
-                # Team member selection
-                assigned_members = st.multiselect(
-                    f"Assign team members to {stage}",
-                    options=team_members,
-                    default=current_members,
-                    key=f"stage_{i}_members"
-                )
-            
-            with col2:
-                # Deadline selection
-                deadline_value = None
-                if current_deadline:
-                    try:
-                        deadline_value = date.fromisoformat(current_deadline)
-                    except:
-                        pass
-                
-                deadline = st.date_input(
-                    f"Deadline for {stage}",
-                    value=deadline_value,
-                    key=f"stage_{i}_deadline"
-                )
-            
-            # Store the assignment
-            if assigned_members or deadline:
-                updated_assignments[str(i)] = {
-                    'members': assigned_members,
-                    'deadline': deadline.isoformat() if deadline else '',
-                    'stage_name': stage
-                }
+    Returns:
+        Selected values from multiselect
+    """
+    validated_default = validate_multiselect_defaults(default or [], options)
     
-    return updated_assignments
+    return st.multiselect(
+        label=label,
+        options=options,
+        default=validated_default,
+        key=key,
+        **kwargs
+    )
 
 def render_substage_progress_with_edit(project, project_id, stage_index, substages, editable=False):
 
@@ -731,8 +658,7 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                     except:
                         st.caption(f"    Completed: {timestamp}")
 
-
-def get_real_time_substage_stats(project: Dict) -> Dict:
+def get_substage_completion_stats(project: Dict) -> Dict:
     """
     Get real-time substage completion statistics from project data
     """
