@@ -696,3 +696,5 @@ def _render_edit_header_with_refresh(project_name, project_id):
             _handle_edit_navigation_cleanup()
             st.session_state.view = "dashboard"
             st.rerun()
+
+
