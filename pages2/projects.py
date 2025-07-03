@@ -7,17 +7,18 @@ from typing import List
 from backend.projects_backend import *
 from utils.utils_project_core import *
 from utils.utils_project_substage import *
+from utils.utils_project_user_sync import _initialize_services
 
+from utils.utils_project_form import _reset_create_form_state,initialize_create_form_state
 from .projects_display import (
     render_project_card, render_level_checkboxes_with_substages,
     render_custom_levels_editor, render_progress_section
 )
+
 from .project_logic import (
     _handle_create_project,
     _handle_save_project,
-    _handle_level_change_edit,
-    _reset_create_form_state,
-    initialize_create_form_state
+    handle_level_change,
 )
 from .project_helpers import (
     _check_edit_success_messages
@@ -28,6 +29,7 @@ def run():
     
     # Initialize session state
     initialize_session_state()
+    _initialize_services()
     
     if "last_view" not in st.session_state:
         st.session_state.last_view = None
@@ -254,7 +256,7 @@ def show_edit_form():
         # Use fresh stage assignments for level changes
         fresh_proj = get_project_by_name(project_name)
         fresh_assignments = fresh_proj.get("stage_assignments", {}) if fresh_proj else {}
-        _handle_level_change_edit(fresh_proj or project, pid, new_index, fresh_assignments)
+        handle_level_change(fresh_proj or project, pid, new_index, fresh_assignments,"edit")
     
     # Check for success messages
     _check_edit_success_messages(pid)
@@ -266,7 +268,6 @@ def show_edit_form():
         on_change_edit, editable=True, stage_assignments=current_stage_assignments, project=project
     )
     
-    # Save button
     if st.button("💾 Save"):
         _handle_save_project(pid, project, name, client, description, start, due, original_team, original_name, stage_assignments)
 
@@ -434,48 +435,6 @@ def _initialize_edit_mode_state(project_id):
         st.warning(f"Could not pre-load substage data: {str(e)}")
 
 
-def _get_fresh_project_data(project_id):
-    """Fetch fresh project data directly from MongoDB using project name, bypassing cache"""
-    try:
-        # First get the project name from current session data
-        current_project = next((p for p in st.session_state.projects if p["id"] == project_id), None)
-        if not current_project:
-            return None
-            
-        project_name = current_project.get("name", "")
-        if not project_name:
-            return None
-            
-        # Fetch fresh data using project name
-        fresh_project = get_project_by_name(project_name)
-        return fresh_project
-    except Exception as e:
-        st.error(f"Error fetching project data: {str(e)}")
-        return None
-
-def _get_fresh_stage_assignments(project_id):
-    """Fetch fresh stage assignments directly from MongoDB"""
-    try:
-        # Get fresh project data
-        project = _get_fresh_project_data(project_id)
-        if project:
-            return project.get("stage_assignments", {})
-        return {}
-    except Exception as e:
-        st.error(f"Error fetching stage assignments: {str(e)}")
-        return {}
-
-def _get_fresh_timestamps(project_id):
-    """Fetch fresh timestamps directly from MongoDB"""
-    try:
-        # Get fresh project data
-        project = _get_fresh_project_data(project_id)
-        if project:
-            return project.get("timestamps", {})
-        return {}
-    except Exception as e:
-        st.error(f"Error fetching timestamps: {str(e)}")
-        return {}
 
 def _handle_edit_navigation_cleanup():
     """Enhanced cleanup with substage cache clearing and refresh success cleanup"""
@@ -513,34 +472,6 @@ def _clear_all_substage_cache(project_id=None):
         if key in st.session_state:
             del st.session_state[key]
 
-def _force_substage_refresh(project_id, project_name):
-    """Force refresh of substage data from MongoDB"""
-    try:
-        # Clear all substage cache first
-        _clear_all_substage_cache(project_id)
-        
-        # Force fresh fetch of project data
-        fresh_project = get_project_by_name(project_name)
-        if not fresh_project:
-            return None
-            
-        # Extract fresh substage data
-        fresh_substages = {}
-        stage_assignments = fresh_project.get("stage_assignments", {})
-        
-        for stage_name, assignment_data in stage_assignments.items():
-            if isinstance(assignment_data, dict) and "substages" in assignment_data:
-                fresh_substages[stage_name] = assignment_data["substages"]
-        
-        # Store fresh substage data in session state with unique key
-        cache_key = f"fresh_substages_{project_id}_{int(time.time())}"
-        st.session_state[cache_key] = fresh_substages
-        
-        return fresh_substages
-        
-    except Exception as e:
-        st.error(f"Error refreshing substage data: {str(e)}")
-        return None
     
 def _get_fresh_substage_data(project_id, stage_name=None):
     """Enhanced function to get fresh substage data with database fallback"""
@@ -588,56 +519,7 @@ def _get_fresh_substage_data(project_id, stage_name=None):
     except Exception as e:
         st.error(f"Error getting fresh substage data: {str(e)}")
         return {}
-    
 
-def _initialize_edit_mode_state(project_id):
-    """Minimal initialization that doesn't cache anything"""
-    # Clear all cached data
-    _clear_edit_mode_cache(project_id)
-    _clear_all_substage_cache(project_id)
-    
-    # Clear edit-specific flags
-    edit_flags = [
-        f"edit_level_update_success_{project_id}",
-        f"edit_stage_modified_{project_id}",
-        f"edit_substage_modified_{project_id}",
-        "edit_form_dirty",
-        "edit_validation_errors"
-    ]
-    
-    for flag in edit_flags:
-        if flag in st.session_state:
-            del st.session_state[flag]
-
-def render_substage_assignments_editor_fresh(levels, team_members, current_assignments, project_id):
-    """Enhanced substage assignments editor that always uses fresh database data"""
-    
-    # Always get fresh substage data from database
-    fresh_substages = _get_fresh_substage_data(project_id)
-    
-    # Build refreshed assignments with fresh substage data
-    refreshed_assignments = {}
-    for level in levels:
-        if level in current_assignments:
-            # Keep existing assignment data structure
-            refreshed_assignments[level] = current_assignments[level].copy()
-            
-            # Replace substages with fresh data from database
-            if level in fresh_substages:
-                refreshed_assignments[level]["substages"] = fresh_substages[level]
-            else:
-                # If no fresh substages found, initialize empty
-                refreshed_assignments[level]["substages"] = {}
-        else:
-            # New level - initialize with fresh substages if available
-            refreshed_assignments[level] = {
-                "assigned_to": "",
-                "deadline": "",
-                "substages": fresh_substages.get(level, {})
-            }
-    
-    # Use the original render function with refreshed data
-    return render_substage_assignments_editor(levels, team_members, refreshed_assignments)
 
 def _handle_edit_refresh(project_id):
     """Direct database refresh that bypasses all session state caching"""
@@ -696,5 +578,3 @@ def _render_edit_header_with_refresh(project_name, project_id):
             _handle_edit_navigation_cleanup()
             st.session_state.view = "dashboard"
             st.rerun()
-
-

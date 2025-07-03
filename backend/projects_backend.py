@@ -32,6 +32,34 @@ def get_project_by_name(project_name):
     except Exception as e:
         st.error(f"Error fetching project by name: {e}")
         return None
+    
+def update_project_by_name(project_name, updates):
+    """
+    Update a project by name with the provided updates.
+    """
+    try:
+        collections = get_db_collections()
+        projects_collection = collections["projects"]
+        
+        # Update the project and get the result
+        result = projects_collection.update_one(
+            {"name": project_name},
+            {"$set": updates}
+        )
+        
+        if result.matched_count == 0:
+            st.warning(f"No project found with name: {project_name}")
+            return False
+        elif result.modified_count == 0:
+            st.info(f"Project '{project_name}' found but no changes were made")
+            return True
+        else:
+            st.success(f"Project '{project_name}' updated successfully")
+            return True
+            
+    except Exception as e:
+        st.error(f"Error updating project by name: {e}")
+        return False
 
 def load_projects_from_db():
     """Load projects from database based on user role"""

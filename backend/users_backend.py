@@ -153,3 +153,4 @@ class ProfileService:
         if user_doc:
             return user_doc.get("profile_image", {}).get("data", None)
         return None
+

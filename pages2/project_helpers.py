@@ -45,14 +45,6 @@ def create_updated_project_data(project, name, client, description, start, due, 
     
     return updated_data
 
-def _reset_create_form_state():
-    """Reset create form state variables"""
-    st.session_state.level_index = -1
-    st.session_state.level_timestamps = {}
-    st.session_state.custom_levels = []
-    st.session_state.selected_template = ""
-    st.session_state.view = "dashboard"
-
 def _update_client_counts_after_edit(project, new_client):
     """Update client project counts after editing"""
     # Update new client count
@@ -71,25 +63,33 @@ def _display_success_messages(messages):
     else:
         st.success("Changes saved to database!")
 
+def _get_member_emails(members):
+    """Helper function to construct member email addresses"""
+    return [f"{member}@v-shesh.com" for member in members]
+
+def _send_stage_assignment_emails(assignments, project_name):
+    """Helper function to send stage assignment emails"""
+    for stage_index, assignment in assignments.items():
+        members = assignment.get("members", [])
+        if members:
+            deadline = assignment.get("deadline", "")
+            stage_name = assignment.get("stage_name", f"Stage {int(stage_index) + 1}")
+            member_emails = _get_member_emails(members)
+            send_stage_assignment_email(member_emails, project_name, stage_name, deadline)
+
 def send_stage_assignment_notifications(project):
     """Send notifications for stage assignments in new project"""
     stage_assignments = project.get("stage_assignments", {})
     project_name = project.get("name", "Unnamed")
     
-    for stage_index, assignment in stage_assignments.items():
-        members = assignment.get("members", [])
-        deadline = assignment.get("deadline", "")
-        stage_name = assignment.get("stage_name", f"Stage {int(stage_index) + 1}")
-        
-        if members:
-            # In a real implementation, you'd get email addresses from user profiles
-            # For now, we'll use the send_stage_assignment_email function from utils
-            member_emails = [f"{member}@company.com" for member in members]  # Mock email addresses
-            send_stage_assignment_email(member_emails, project_name, stage_name, deadline)
+    if stage_assignments:
+        _send_stage_assignment_emails(stage_assignments, project_name)
 
 def _send_stage_assignment_change_notifications(new_assignments, old_assignments, project_name):
     """Send notifications when stage assignments change"""
     # Compare old and new assignments to find changes
+    changed_assignments = {}
+    
     for stage_index, assignment in new_assignments.items():
         old_assignment = old_assignments.get(stage_index, {})
         new_members = set(assignment.get("members", []))
@@ -98,10 +98,15 @@ def _send_stage_assignment_change_notifications(new_assignments, old_assignments
         # Find newly assigned members
         newly_assigned = new_members - old_members
         if newly_assigned:
-            deadline = assignment.get("deadline", "")
-            stage_name = assignment.get("stage_name", f"Stage {int(stage_index) + 1}")
-            member_emails = [f"{member}@company.com" for member in newly_assigned]
-            send_stage_assignment_email(member_emails, project_name, stage_name, deadline)
+            # Create assignment dict for newly assigned members only
+            changed_assignments[stage_index] = {
+                "members": list(newly_assigned),
+                "deadline": assignment.get("deadline", ""),
+                "stage_name": assignment.get("stage_name", f"Stage {int(stage_index) + 1}")
+            }
+    
+    if changed_assignments:
+        _send_stage_assignment_emails(changed_assignments, project_name)
 
 def _handle_email_reminders(project, pid, levels, current_level):
     """Handle email reminder logic"""
@@ -127,22 +132,23 @@ def _handle_email_reminders(project, pid, levels, current_level):
             if send_invoice_email(lead_email, project_name):
                 st.session_state[email_key] = now
 
-def _check_dashboard_success_messages(pid):
-    """Check and display dashboard success messages"""
-    if st.session_state.get(f"level_update_success_{pid}", False):
+def _check_success_messages(pid, context="dashboard"):
+    """Check and display success messages for dashboard or edit context"""
+    key_prefix = "edit_" if context == "edit" else ""
+    
+    if st.session_state.get(f"{key_prefix}level_update_success_{pid}", False):
         st.success("Project level updated!")
-        st.session_state[f"level_update_success_{pid}"] = False
+        st.session_state[f"{key_prefix}level_update_success_{pid}"] = False
     
     if st.session_state.get(f"project_completed_message_{pid}"):
         st.success(st.session_state[f"project_completed_message_{pid}"])
         st.session_state[f"project_completed_message_{pid}"] = False
 
+# Legacy function names for backward compatibility
+def _check_dashboard_success_messages(pid):
+    """Check and display dashboard success messages - Legacy wrapper"""
+    _check_success_messages(pid, "dashboard")
+
 def _check_edit_success_messages(pid):
-    """Check and display edit form success messages"""
-    if st.session_state.get(f"edit_level_update_success_{pid}", False):
-        st.success("Project level updated!")
-        st.session_state[f"edit_level_update_success_{pid}"] = False
-    
-    if st.session_state.get(f"project_completed_message_{pid}"):
-        st.success(st.session_state[f"project_completed_message_{pid}"])
-        st.session_state[f"project_completed_message_{pid}"] = False
+    """Check and display edit form success messages - Legacy wrapper"""
+    _check_success_messages(pid, "edit")

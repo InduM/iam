@@ -16,22 +16,138 @@ from utils.utils_project_substage import (
 from .project_logic import (
     _are_all_substages_complete, _auto_advance_main_stage,
     _auto_uncheck_main_stage,
-    _handle_level_change_dashboard,
+    handle_level_change,
     _handle_project_deletion,
     _has_substages,
    
 )
 from .project_helpers import (
-    _display_success_messages,
     _handle_email_reminders,
     _check_dashboard_success_messages,
-    _check_edit_success_messages,
 )
 
+# Helper Functions
+def _detect_form_context(project_id):
+    """Centralized form context detection"""
+    return (project_id == "new" or 
+            not project_id or 
+            project_id.startswith("auto_") or
+            project_id.startswith("form_"))
+
+def _validate_sequential_access(current_index, target_index, max_completed, is_advance=True):
+    """Centralized sequential validation logic"""
+    if is_advance:
+        return target_index == max_completed + 1
+    else:
+        return target_index == max_completed
+
+def _get_completion_status(project, stage_key, substage_idx, is_form_context):
+    """Centralized completion status retrieval"""
+    if is_form_context:
+        substage_completion = st.session_state.get("substage_completion", {})
+    else:
+        substage_completion = project.get("substage_completion", {}) if project else {}
+    
+    current_completion = substage_completion.get(stage_key, {})
+    return current_completion.get(str(substage_idx), False)
+
+def _handle_timestamp_update(project, project_id, stage_key, substage_idx, completed, is_form_context):
+    """Centralized timestamp handling for both form and database contexts"""
+    timestamp = get_current_timestamp() if completed else None
+    
+    if is_form_context:
+        # Handle session state timestamps
+        if "substage_timestamps" not in st.session_state:
+            st.session_state.substage_timestamps = {}
+        if stage_key not in st.session_state.substage_timestamps:
+            st.session_state.substage_timestamps[stage_key] = {}
+        
+        if completed:
+            st.session_state.substage_timestamps[stage_key][str(substage_idx)] = timestamp
+        else:
+            # Remove timestamp when unchecked
+            if str(substage_idx) in st.session_state.substage_timestamps[stage_key]:
+                del st.session_state.substage_timestamps[stage_key][str(substage_idx)]
+    else:
+        # Handle project timestamps
+        if project:
+            timestamp_key = "substage_timestamps"
+            if timestamp_key not in project:
+                project[timestamp_key] = {}
+            if stage_key not in project[timestamp_key]:
+                project[timestamp_key][stage_key] = {}
+            
+            if completed:
+                project[timestamp_key][stage_key][str(substage_idx)] = timestamp
+            else:
+                # Remove timestamp when unchecked
+                if str(substage_idx) in project[timestamp_key][stage_key]:
+                    del project[timestamp_key][stage_key][str(substage_idx)]
+
+def _update_substage_completion(project, project_id, stage_key, substage_idx, completed, is_form_context):
+    """Centralized substage completion update"""
+    if is_form_context:
+        # Update session state
+        if "substage_completion" not in st.session_state:
+            st.session_state.substage_completion = {}
+        if stage_key not in st.session_state.substage_completion:
+            st.session_state.substage_completion[stage_key] = {}
+        
+        st.session_state.substage_completion[stage_key][str(substage_idx)] = completed
+    else:
+        # Update project data
+        if project:
+            if "substage_completion" not in project:
+                project["substage_completion"] = {}
+            if stage_key not in project["substage_completion"]:
+                project["substage_completion"][stage_key] = {}
+            
+            project["substage_completion"][stage_key][str(substage_idx)] = completed
+            
+            # Update database for existing projects
+            update_substage_completion_in_db(project_id, project["substage_completion"])
+
+def _render_two_column_layout(left_content, right_content, left_ratio=1, right_ratio=3):
+    """Reusable two-column layout"""
+    col1, col2 = st.columns([left_ratio, right_ratio])
+    with col1:
+        left_content()
+    with col2:
+        right_content()
+
+def _show_sequential_error(is_advance=True, is_substage=False):
+    """Centralized sequential error messages"""
+    if is_substage:
+        if is_advance:
+            st.error("❌ Complete substages sequentially!")
+        else:
+            st.error("❌ You can only uncheck the last completed substage!")
+    else:
+        if is_advance:
+            st.error("❌ You can only advance to the next stage sequentially!")
+        else:
+            st.error("❌ You can only go back one stage at a time!")
+    
+    time.sleep(0.1)
+    st.rerun()
+
+def _render_completion_timestamp(timestamp, is_compact=False):
+    """Centralized timestamp rendering"""
+    if not timestamp:
+        return
+    
+    try:
+        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        if is_compact:
+            st.caption(f"{dt.strftime('%m/%d %H:%M')}")
+        else:
+            st.caption(f"Completed: {dt.strftime('%Y-%m-%d %H:%M')}")
+    except:
+        st.caption(f"Completed: {timestamp}")
+
+# Main Functions
 def render_project_card(project, index):
-    """Render individual project card with substage validation
-    Updated to show auto-uncheck messages and hide overdue stages for completed stages
-    """
+    """Render individual project card with substage validation"""
     pid = project.get("id", f"auto_{index}")
     
     with st.expander(f"{project.get('name', 'Unnamed')}"):
@@ -75,7 +191,6 @@ def render_project_card(project, index):
             if active_overdue_stages:
                 st.error("🔴 **Overdue Stages:**")
                 for overdue in active_overdue_stages:
-                    # Mobile-friendly overdue display
                     st.error(f"📍 {overdue['stage_name']}: {overdue['days_overdue']} days")
         
         # Level checkboxes with mobile optimization
@@ -85,7 +200,7 @@ def render_project_card(project, index):
                     st.error("❌ Complete all substages first!")
                     return
             
-            _handle_level_change_dashboard(proj_id, proj, new_index, stage_assignments)
+            handle_level_change(proj,proj_id, new_index, stage_assignments,"dashboard")
         
         # Check for success messages
         _check_dashboard_success_messages(pid)
@@ -116,29 +231,19 @@ def render_project_card(project, index):
 
 def render_level_checkboxes_with_substages(context, project_id, current_level, timestamps, levels, 
                                          on_change, editable=False, stage_assignments=None, project=None):
-    """
-    Enhanced level checkboxes that also show substages with validation
-    Updated to enforce sequential checking/unchecking and ensure substages are visible
-    Fixed to handle form contexts properly
-    """
+    """Enhanced level checkboxes that also show substages with validation"""
     if not levels:
         st.warning("No levels defined for this project.")
         return
     
-    # Check if this is a form context
-    is_form_context = (project_id == "new" or 
-                      project_id.startswith("form_") or 
-                      project_id.startswith("auto_") or 
-                      not project_id)
+    is_form_context = _detect_form_context(project_id)
     
     for i, level in enumerate(levels):
         # Create container for stage and its substages
         stage_container = st.container()
         
         with stage_container:
-            col1, col2 = st.columns([1, 3])
-            
-            with col1:
+            def render_main_stage():
                 # Main stage checkbox
                 is_checked = i <= current_level
                 key = f"{context}_{project_id}_level_{i}"
@@ -148,8 +253,8 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                 can_check_stage = substages_complete or not _has_substages(stage_assignments, i)
                 
                 # Sequential checking logic
-                can_advance_sequentially = (i == current_level + 1)  # Can only check next stage
-                can_go_back_sequentially = (i == current_level)  # Can only uncheck current stage
+                can_advance_sequentially = _validate_sequential_access(current_level, i, current_level, True)
+                can_go_back_sequentially = _validate_sequential_access(current_level, i, current_level, False)
                 
                 if editable:
                     checked = st.checkbox(
@@ -164,9 +269,7 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                         if checked:
                             # Trying to check a stage
                             if not can_advance_sequentially:
-                                st.error("❌ You can only advance to the next stage sequentially!")
-                                time.sleep(0.1)
-                                st.rerun()
+                                _show_sequential_error(True, False)
                             elif not can_check_stage:
                                 st.error("❌ Complete all substages first before advancing to this stage!")
                                 time.sleep(0.1)
@@ -178,9 +281,7 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                         else:
                             # Trying to uncheck a stage
                             if not can_go_back_sequentially:
-                                st.error("❌ You can only go back one stage at a time!")
-                                time.sleep(0.1)
-                                st.rerun()
+                                _show_sequential_error(False, False)
                             else:
                                 # Valid go back
                                 if on_change:
@@ -198,15 +299,13 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                     status = "✅" if is_checked else "⏳"
                     st.markdown(f"{status} **{i+1}. {level}**")
             
-            with col2:
+            def render_timestamp():
                 # Show timestamp if available
                 if str(i) in timestamps:
                     timestamp = timestamps[str(i)]
-                    try:
-                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                        st.caption(f"Completed: {dt.strftime('%Y-%m-%d %H:%M')}")
-                    except:
-                        st.caption(f"Completed: {timestamp}")
+                    _render_completion_timestamp(timestamp)
+            
+            _render_two_column_layout(render_main_stage, render_timestamp)
             
             # ALWAYS show substages if they exist for this stage
             if stage_assignments and str(i) in stage_assignments:
@@ -223,37 +322,25 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                         st.markdown("---") # Add separator after substages
 
 def render_substage_progress_with_edit(project, project_id, stage_index, substages, editable=False):
-    """
-    Render substage progress with real-time editing capability and validation
-    Enhanced with sequential substage checking and better visibility
-    Fixed to handle form context (new projects) properly
-    """
+    """Render substage progress with real-time editing capability and validation"""
     if not substages:
         return
     
     # Use a more prominent header for substages
     st.markdown(f"**Substages**")
     
-    # Check if this is a form context (new project creation/editing)
-    is_form_context = project_id == "new" or not project_id or project_id.startswith("auto_")
+    is_form_context = _detect_form_context(project_id)
     
     # Get current substage completion status
-    if is_form_context:
-        # For form context, use session state
-        substage_completion = st.session_state.get("substage_completion", {})
-    else:
-        # For existing projects, use project data
-        substage_completion = project.get("substage_completion", {}) if project else {}
-    
     stage_key = str(stage_index)
-    current_completion = substage_completion.get(stage_key, {})
-    
-    # Check if this stage is accessible (current stage or previous stages)
     if is_form_context:
+        current_completion = st.session_state.get("substage_completion", {}).get(stage_key, {})
         current_level = st.session_state.get("level_index", -1)
     else:
+        current_completion = project.get("substage_completion", {}).get(stage_key, {}) if project else {}
         current_level = project.get("level", -1) if project else -1
     
+    # Check if this stage is accessible
     stage_accessible = stage_index <= current_level + 1
     
     substage_changed = False
@@ -262,7 +349,7 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
     # Find the highest completed substage for sequential logic
     highest_completed_substage = -1
     for idx in range(len(substages)):
-        if current_completion.get(str(idx), False):
+        if _get_completion_status(project, stage_key, idx, is_form_context):
             highest_completed_substage = idx
         else:
             break  # Stop at first incomplete substage
@@ -278,20 +365,16 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
         )
         
         for substage_idx, substage in enumerate(substages):
-            substage_key = f"{stage_key}_{substage_idx}"
             substage_name = substage.get("name", f"Substage {substage_idx + 1}")
             
             # Current completion status
-            is_completed = current_completion.get(str(substage_idx), False)
+            is_completed = _get_completion_status(project, stage_key, substage_idx, is_form_context)
             
-            # Create columns for substage layout
-            sub_col1, sub_col2 = st.columns([4, 1])
-            
-            with sub_col1:
+            def render_substage_checkbox():
                 if editable and stage_accessible:
                     # Sequential substage logic
-                    can_check_substage = (substage_idx == highest_completed_substage + 1)  # Can only check next substage
-                    can_uncheck_substage = (substage_idx == highest_completed_substage)  # Can only uncheck last completed substage
+                    can_check_substage = _validate_sequential_access(highest_completed_substage, substage_idx, highest_completed_substage, True)
+                    can_uncheck_substage = _validate_sequential_access(highest_completed_substage, substage_idx, highest_completed_substage, False)
                     
                     checkbox_key = f"substage_{project_id}_{stage_index}_{substage_idx}"
                     completed = st.checkbox(
@@ -302,22 +385,15 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                     
                     # Check if substage completion changed
                     if completed != is_completed:
-                        if completed:
-                            # Trying to check a substage
-                            if not can_check_substage:
-                                st.error("❌ Complete substages sequentially!")
-                                time.sleep(0.1)
-                                st.rerun()
-                                return
-                        else:
-                            # Trying to uncheck a substage
-                            if not can_uncheck_substage:
-                                st.error("❌ You can only uncheck the last completed substage!")
-                                time.sleep(0.1)
-                                st.rerun()
-                                return
+                        if completed and not can_check_substage:
+                            _show_sequential_error(True, True)
+                            return
+                        elif not completed and not can_uncheck_substage:
+                            _show_sequential_error(False, True)
+                            return
                         
                         # Valid substage change
+                        nonlocal substage_changed, substage_unchecked
                         substage_changed = True
                         
                         # Track if a substage was unchecked
@@ -325,55 +401,10 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                             substage_unchecked = True
                         
                         # Update substage completion
-                        if is_form_context:
-                            # For form context, update session state only
-                            if "substage_completion" not in st.session_state:
-                                st.session_state.substage_completion = {}
-                            if stage_key not in st.session_state.substage_completion:
-                                st.session_state.substage_completion[stage_key] = {}
-                            
-                            st.session_state.substage_completion[stage_key][str(substage_idx)] = completed
-                            
-                            # Handle timestamps in session state
-                            if completed:
-                                if "substage_timestamps" not in st.session_state:
-                                    st.session_state.substage_timestamps = {}
-                                if stage_key not in st.session_state.substage_timestamps:
-                                    st.session_state.substage_timestamps[stage_key] = {}
-                                st.session_state.substage_timestamps[stage_key][str(substage_idx)] = get_current_timestamp()
-                            else:
-                                # Remove timestamp when unchecked
-                                if ("substage_timestamps" in st.session_state and 
-                                    stage_key in st.session_state.substage_timestamps and 
-                                    str(substage_idx) in st.session_state.substage_timestamps[stage_key]):
-                                    del st.session_state.substage_timestamps[stage_key][str(substage_idx)]
-                        else:
-                            # For existing projects, update project data and database
-                            if project:
-                                if "substage_completion" not in project:
-                                    project["substage_completion"] = {}
-                                if stage_key not in project["substage_completion"]:
-                                    project["substage_completion"][stage_key] = {}
-                                
-                                project["substage_completion"][stage_key][str(substage_idx)] = completed
-                                
-                                # Add/remove timestamp
-                                timestamp_key = f"substage_timestamps"
-                                if completed:
-                                    if timestamp_key not in project:
-                                        project[timestamp_key] = {}
-                                    if stage_key not in project[timestamp_key]:
-                                        project[timestamp_key][stage_key] = {}
-                                    project[timestamp_key][stage_key][str(substage_idx)] = get_current_timestamp()
-                                else:
-                                    # Remove timestamp when unchecked
-                                    if (timestamp_key in project and 
-                                        stage_key in project[timestamp_key] and 
-                                        str(substage_idx) in project[timestamp_key][stage_key]):
-                                        del project[timestamp_key][stage_key][str(substage_idx)]
-                                
-                                # Update in database immediately (only for existing projects)
-                                update_substage_completion_in_db(project_id, project["substage_completion"])
+                        _update_substage_completion(project, project_id, stage_key, substage_idx, completed, is_form_context)
+                        
+                        # Handle timestamps
+                        _handle_timestamp_update(project, project_id, stage_key, substage_idx, completed, is_form_context)
                     
                     # Show status messages for substages
                     if not can_check_substage and not is_completed:
@@ -387,7 +418,7 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                     disabled_text = " (locked)" if not stage_accessible and editable else ""
                     st.markdown(f"  {status} 🔸 {substage_name}{disabled_text}")
             
-            with sub_col2:
+            def render_substage_info():
                 # Show completion timestamp if available
                 if is_completed:
                     if is_form_context:
@@ -398,11 +429,7 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                     if (stage_key in timestamps and 
                         str(substage_idx) in timestamps[stage_key]):
                         timestamp = timestamps[stage_key][str(substage_idx)]
-                        try:
-                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                            st.caption(f"{dt.strftime('%m/%d %H:%M')}")
-                        except:
-                            st.caption(f"{timestamp}")
+                        _render_completion_timestamp(timestamp, is_compact=True)
                 
                 # Show deadline if available
                 if "deadline" in substage and substage["deadline"]:
@@ -421,6 +448,8 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                             st.caption(f"📅 Due: {deadline_date.strftime('%m/%d')}")
                     except:
                         pass
+            
+            _render_two_column_layout(render_substage_checkbox, render_substage_info, 4, 1)
         
         # Close the styling div
         st.markdown("</div>", unsafe_allow_html=True)
@@ -428,7 +457,7 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
         # Show completion status for the stage
         if substages:
             completed_count = sum(1 for idx in range(len(substages)) 
-                                if current_completion.get(str(idx), False))
+                                if _get_completion_status(project, stage_key, idx, is_form_context))
             total_count = len(substages)
             completion_percentage = (completed_count / total_count) * 100
             
@@ -468,7 +497,6 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
         time.sleep(0.1)
         st.rerun()
 
-
 def render_custom_levels_editor():
     """Render custom levels editor"""
     st.subheader("Customize Progress Levels")
@@ -500,11 +528,8 @@ def render_custom_levels_editor():
     # Add required levels back
     st.session_state.custom_levels += ["Invoice", "Payment"]
 
-# Updated render_progress_section function in projects_display.py
 def render_progress_section(form_type):
-    """Render progress section for forms with enhanced substage visibility
-    Fixed to handle form context properly without database operations
-    """
+    """Render progress section for forms with enhanced substage visibility"""
     st.subheader("Progress")
     level_index = st.session_state.get("level_index", -1)
     level_timestamps = st.session_state.get("level_timestamps", {})
@@ -551,22 +576,3 @@ def _render_project_action_buttons(project, pid):
         if col_no.button("❌ No", key=f"no_{pid}"):
             st.session_state.confirm_delete[confirm_key] = False
             st.rerun()
-
-def ensure_substages_visible(stage_assignments, levels):
-    """Ensure substages are properly structured and visible"""
-    if not stage_assignments or not levels:
-        return stage_assignments or {}
-    
-    # Ensure all stages have proper structure
-    for i, level in enumerate(levels):
-        stage_key = str(i)
-        if stage_key in stage_assignments:
-            stage_data = stage_assignments[stage_key]
-            # Ensure substages list exists
-            if "substages" not in stage_data:
-                stage_data["substages"] = []
-            # Ensure stage_name exists
-            if "stage_name" not in stage_data:
-                stage_data["stage_name"] = level
-    
-    return stage_assignments

@@ -114,17 +114,17 @@ def display_profile(user_profile):
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write(f"**👤 Name:** {user_profile.get('name', 'N/A')}")
-        st.write(f"**📧 Email:** {user_profile.get('email', 'N/A')}")
-        st.write(f"**🌿 Branch:** {user_profile.get('branch', 'N/A')}")
+        st.write(f"**Name:** {user_profile.get('name', 'N/A')}")
+        st.write(f"**Email:** {user_profile.get('email', 'N/A')}")
+        st.write(f"**Branch:** {user_profile.get('branch', 'N/A')}")
     
     with col2:
-        st.write(f"**💼 Role:** {user_profile.get('position', 'N/A')}")
-        st.write(f"**📅 Date of Joining:** {user_profile.get('DOJ', 'N/A')}")
+        st.write(f"**Role:** {user_profile.get('position', 'N/A')}")
+        st.write(f"**Date of Joining:** {user_profile.get('DOJ', 'N/A')}")
 
     # Projects section
     st.markdown("---")
-    st.markdown("### 📁 Current Projects")
+    st.markdown("### Current Projects")
     
     projects = user_profile.get("project", [])
     if isinstance(projects, list) and projects:
@@ -188,9 +188,7 @@ def run():
         # Show project details page
         display_project_details()
     else:
-        # Show profile page
-        st.title(f"👤 {user_profile.get('name', 'User')} Profile")
-        
+        # Show profile page        
         if st.session_state.get("edit_mode", False):
             edit_profile(user_profile)
         else:
@@ -198,6 +196,6 @@ def run():
             
             # Update profile button
             st.markdown("---")
-            if st.button("✏️ Update Profile", type="primary"):
+            if st.button("Update Profile", type="primary"):
                 st.session_state.edit_mode = True
                 st.rerun()
