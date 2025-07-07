@@ -14,12 +14,14 @@ from utils.utils_project_substage import (
     render_substage_summary_widget,
 )
 from .project_logic import (
-    _are_all_substages_complete, _auto_advance_main_stage,
-    _auto_uncheck_main_stage,
+    _are_all_substages_complete, 
     handle_level_change,
     _handle_project_deletion,
+)
+from .project_completion import(
+    _auto_advance_main_stage,
+    _auto_uncheck_main_stage,
     _has_substages,
-   
 )
 from .project_helpers import (
     _handle_email_reminders,
