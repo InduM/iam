@@ -1,6 +1,6 @@
 import streamlit as st
 from utils.utils_login import is_logged_in
-from datetime import datetime, date
+from datetime import datetime
 from backend.log_backend import LogBackend
 from utils.utils_log import (
     create_default_log, get_date_constraints, can_add_log_for_date,

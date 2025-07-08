@@ -99,6 +99,82 @@ class UserService:
             for p in m.get("project", [])
         })
 
+    # NEW FUNCTION: Add to users.py - UserService class in backend
+    def update_user_project_assignments(self, username, project_name, action="add"):
+        """
+        Update user's project assignments - to be added to UserService class
+        
+        Args:
+            username: Username of the user
+            project_name: Name of the project
+            action: "add" or "remove"
+        """
+        try:
+            # Convert username to email
+            user_email = f"{username}@v-shesh.com" if "@" not in username else username
+            
+            # Fetch current user data
+            user_data = self.fetch_user_data(user_email)
+            if not user_data:
+                return False
+            
+            current_projects = user_data.get("project", [])
+            
+            if action == "add":
+                if project_name not in current_projects:
+                    current_projects.append(project_name)
+                    return self.update_member(user_email, {"project": current_projects})
+            elif action == "remove":
+                if project_name in current_projects:
+                    current_projects.remove(project_name)
+                    return self.update_member(user_email, {"project": current_projects})
+            
+            return True  # No change needed
+            
+        except Exception as e:
+            print(f"Error updating user project assignments: {str(e)}")
+            return False
+
+    # NEW FUNCTION: Add to users.py - UserService class in backend
+    def bulk_update_project_assignments(self, project_name, stage_assignments):
+        """
+        Bulk update project assignments for all users in stage assignments
+        
+        Args:
+            project_name: Name of the project
+            stage_assignments: Dictionary of stage assignments
+        """
+        try:
+            # Collect all assigned users
+            assigned_users = set()
+            
+            for stage_name, assignment_data in stage_assignments.items():
+                if isinstance(assignment_data, dict):
+                    # Main stage assignment
+                    main_assignee = assignment_data.get("assigned_to", "")
+                    if main_assignee and main_assignee != "":
+                        assigned_users.add(main_assignee)
+                    
+                    # Substage assignments
+                    substages = assignment_data.get("substages", {})
+                    for substage_name, substage_data in substages.items():
+                        if isinstance(substage_data, dict):
+                            substage_assignee = substage_data.get("assigned_to", "")
+                            if substage_assignee and substage_assignee != "":
+                                assigned_users.add(substage_assignee)
+            
+            # Update each user's project assignments
+            success_count = 0
+            for username in assigned_users:
+                if self.update_user_project_assignments(username, project_name, "add"):
+                    success_count += 1
+            
+            return success_count
+            
+        except Exception as e:
+            print(f"Error in bulk update project assignments: {str(e)}")
+            return 0
+
 
 class LogService:
     """Handle log-related operations"""

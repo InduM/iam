@@ -32,11 +32,15 @@ from .project_helpers import (
     _update_client_counts_after_edit,
     _display_success_messages,
     _send_stage_assignment_change_notifications,
+    _get_user_email_from_username,
+    _validate_user_assignments,
+
 )
 
 from .project_completion import(
     _are_all_substages_complete,
    _check_project_completion,
+   _handle_stage_completion_cleanup
  )
 
 from .project_date_utils import (
@@ -44,7 +48,7 @@ from .project_date_utils import (
 )
 # UPDATED FUNCTION: Enhanced create project handler with substage completion reset
 def _handle_create_project(name, client, description, start, due):
-    """Enhanced version of your existing create function with improved user-project sync"""
+    """Enhanced create project handler with comprehensive user-project sync"""
     if not validate_project_dates(start, due):
         st.error("Cannot submit: Due date must be later than the start date.")
     elif not name or not client:
@@ -62,9 +66,18 @@ def _handle_create_project(name, client, description, start, due):
                 st.error(f"• {error}")
             return
         
+        # Validate user assignments before creating project
+        from .project_helpers import validate_user_assignments
+        is_valid, invalid_users = validate_user_assignments(stage_assignments)
+        if not is_valid:
+            st.error("Cannot create project - the following users don't exist in the database:")
+            for user in invalid_users:
+                st.error(f"• {user}")
+            return
+        
         new_proj = create_project_data(name, client, description, start, due)
         
-        # ENHANCED: Ensure new project has clean substage completion data
+        # Ensure new project has clean substage completion data
         new_proj["substage_completion"] = {}
         new_proj["substage_timestamps"] = {}
         
@@ -83,10 +96,13 @@ def _handle_create_project(name, client, description, start, due):
             # Add project to manager
             add_project_to_manager(st.session_state.get("username", ""), name)
             
-            # ENHANCED: Update user project assignments based on stage assignments
-            _update_user_project_assignments(name, stage_assignments)
+            # ENHANCED: Sync all stage assignments to user profiles
+            from .project_helpers import sync_all_stage_assignments_to_user_profiles
+            success_count = sync_all_stage_assignments_to_user_profiles(name, stage_assignments)
+            if success_count > 0:
+                st.success(f"✅ Project added to {success_count} user profiles!")
             
-            # ENHANCED: Complete form state reset including substages and completion data
+            # Complete form state reset
             _reset_create_form_state()
             
             # Navigate back to dashboard
@@ -95,7 +111,7 @@ def _handle_create_project(name, client, description, start, due):
 
 # UPDATED FUNCTION: Enhanced save project handler with date validation
 def _handle_save_project(pid, project, name, client, description, start, due, original_team, original_name, stage_assignments):
-    """Enhanced version of your existing save function with improved user-project sync"""
+    """Enhanced save project handler with comprehensive user-project sync"""
     if not validate_project_dates(start, due):
         st.error("Cannot save: Due date must be later than the start date.")
     elif not name or not client:
@@ -108,6 +124,15 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
             st.error("Cannot save project due to date validation errors:")
             for error in date_errors:
                 st.error(f"• {error}")
+            return
+        
+        # Validate user assignments before saving
+        from .project_helpers import validate_user_assignments
+        is_valid, invalid_users = validate_user_assignments(stage_assignments)
+        if not is_valid:
+            st.error("Cannot save project - the following users don't exist in the database:")
+            for user in invalid_users:
+                st.error(f"• {user}")
             return
         
         # Get old stage assignments BEFORE update
@@ -127,19 +152,30 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
             # Update client project counts
             _update_client_counts_after_edit(project, client)
             
-            # Handle name change
+            # Handle name change - update user profiles
             if original_name != name:
                 updated_count = update_project_name_in_user_profiles(original_name, name)
                 if updated_count > 0:
                     success_messages.append(f"Project name updated in {updated_count} user profiles!")
             
-            # Handle stage assignment changes and update user project assignments
+            # Handle stage assignment changes with comprehensive user sync
             if stage_assignments != old_stage_assignments:
                 success_messages.append("Stage assignments updated!")
                 _send_stage_assignment_change_notifications(stage_assignments, old_stage_assignments, name)
                 
-                # ENHANCED: Update user project assignments based on new stage assignments
-                _update_user_project_assignments(name, stage_assignments)
+                # ENHANCED: Comprehensive user-project sync
+                from .project_helpers import sync_user_assignment_changes
+                sync_success = sync_user_assignment_changes(
+                    name, old_stage_assignments, stage_assignments
+                )
+                if sync_success:
+                    success_messages.append("✅ User project assignments synchronized!")
+                
+                # Also clean up unassigned users
+                from .project_helpers import remove_project_from_unassigned_users
+                removed_count = remove_project_from_unassigned_users(name, stage_assignments)
+                if removed_count > 0:
+                    success_messages.append(f"🧹 Project removed from {removed_count} unassigned user profiles!")
             
             project.update(updated_project)
             
@@ -151,262 +187,67 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
 
 
 def _handle_project_deletion(pid, project):
-    """Handle project deletion"""
+    """Enhanced handle project deletion with user-project sync cleanup"""
     if delete_project_from_db(pid):
+        project_name = project.get("name", "Unnamed")
+        
+        # Remove from projects list
         st.session_state.projects = [proj for proj in st.session_state.projects if proj["id"] != pid]
-        remove_project_from_all_users(project.get("name", "Unnamed"))
-        st.success("Project deleted from database.")
+        
+        # Remove project from all user profiles
+        remove_project_from_all_users(project_name)
         
         # Update client project count after deletion
         client_name = project.get("client", "")
         update_client_project_count(client_name)
+        
+        st.success(f"✅ Project '{project_name}' deleted and removed from all user profiles!")
     
     st.session_state.confirm_delete[f"confirm_delete_{pid}"] = False
     st.rerun()
 
-def _update_user_project_assignments(project_name, stage_assignments):
+def handle_substage_assignment_change(project_name, stage_name, substage_name, old_assignee, new_assignee):
     """
-    Update user project assignments when stage assignments change.
-    Adds project to users assigned to any stage/substage.
+    Handle real-time user-project sync when substage assignment changes
+    
+    Args:
+        project_name: Name of the project
+        stage_name: Name of the stage
+        substage_name: Name of the substage
+        old_assignee: Previous assignee username
+        new_assignee: New assignee username
+    
+    Returns:
+        bool: True if sync was successful
     """
     try:
-        from backend.users_backend import UserService, DatabaseManager
-        
-        db_manager = DatabaseManager()
-        user_service = UserService(db_manager)
-        
-        # Collect all assigned users from all stages and substages
-        assigned_users = set()
-        
-        for stage_name, assignment_data in stage_assignments.items():
-            if isinstance(assignment_data, dict):
-                # Main stage assignment
-                main_assignee = assignment_data.get("assigned_to", "")
-                if main_assignee and main_assignee != "":
-                    assigned_users.add(main_assignee)
-                
-                # Substage assignments
-                substages = assignment_data.get("substages", {})
-                for substage_name, substage_data in substages.items():
-                    if isinstance(substage_data, dict):
-                        substage_assignee = substage_data.get("assigned_to", "")
-                        if substage_assignee and substage_assignee != "":
-                            assigned_users.add(substage_assignee)
-        
-        # Add project to each assigned user's current projects
-        for username in assigned_users:
-            # Convert username to email format 
-            user_email = _get_user_email_from_username(username)
-            
-            # Fetch current user data
-            user_data = user_service.fetch_user_data(user_email)
-            if user_data:
-                current_projects = user_data.get("project", [])
-                
-                # Add project if not already in list
-                if project_name not in current_projects:
-                    current_projects.append(project_name)
-                    user_service.update_member(user_email, {"project": current_projects})
-                    
-        return True
-        
+        from .project_helpers import sync_substage_assignment_change
+        return sync_substage_assignment_change(
+            project_name, stage_name, substage_name, old_assignee, new_assignee
+        )
     except Exception as e:
-        st.error(f"Error updating user project assignments: {str(e)}")
+        st.error(f"Error handling substage assignment change: {str(e)}")
         return False
-
-
-def _handle_stage_completion_cleanup(project, project_id, completed_level):
+def handle_stage_assignment_change_realtime(project_name, stage_name, old_assignment, new_assignment):
     """
-    Handle cleanup when a stage is completed - remove users from project if no future assignments.
+    Handle real-time user-project sync when stage assignment changes
+    
+    Args:
+        project_name: Name of the project
+        stage_name: Name of the stage
+        old_assignment: Previous assignment data
+        new_assignment: New assignment data
+    
+    Returns:
+        bool: True if sync was successful
     """
     try:
-        project_name = project.get("name", "")
-        project_levels = project.get("levels", [])
-        stage_assignments = project.get("stage_assignments", {})
-        
-        if not project_name or completed_level >= len(project_levels):
-            return
-        
-        # Get the completed stage name
-        completed_stage_name = project_levels[completed_level]
-        completed_assignment = stage_assignments.get(completed_stage_name, {})
-        
-        # Collect users who completed this stage
-        completed_users = set()
-        
-        if isinstance(completed_assignment, dict):
-            # Main stage assignee
-            main_assignee = completed_assignment.get("assigned_to", "")
-            if main_assignee:
-                completed_users.add(main_assignee)
-            
-            # Substage assignees
-            substages = completed_assignment.get("substages", {})
-            for substage_name, substage_data in substages.items():
-                if isinstance(substage_data, dict):
-                    substage_assignee = substage_data.get("assigned_to", "")
-                    if substage_assignee:
-                        completed_users.add(substage_assignee)
-        
-        # Remove project from each user if they have no future assignments
-        for username in completed_users:
-            _remove_user_from_completed_project(
-                project_name, username, completed_level, project_levels, stage_assignments
-            )
-            
+        from .project_helpers import handle_stage_assignment_change
+        return handle_stage_assignment_change(
+            project_name, stage_name, old_assignment, new_assignment
+        )
     except Exception as e:
-        st.error(f"Error in stage completion cleanup: {str(e)}")
-
-def _handle_substage_completion_cleanup(project_name, stage_name, substage_name, assigned_username, project_levels, stage_assignments):
-    """
-    Handle cleanup when a substage is completed - remove user from project if no future assignments.
-    Call this function when a substage is marked as complete.
-    """
-    try:
-        if not assigned_username or not project_name:
-            return
-        
-        # Check if user has any future assignments in this project
-        user_has_future_assignments = False
-        
-        # Get current stage index
-        current_stage_index = -1
-        if stage_name in project_levels:
-            current_stage_index = project_levels.index(stage_name)
-        
-        # Check remaining stages (current stage and future stages)
-        remaining_stages = project_levels[current_stage_index:] if current_stage_index >= 0 else project_levels
-        
-        for remaining_stage_name in remaining_stages:
-            assignment_data = stage_assignments.get(remaining_stage_name, {})
-            if isinstance(assignment_data, dict):
-                # Check main stage assignment
-                main_assignee = assignment_data.get("assigned_to", "")
-                if main_assignee == assigned_username:
-                    user_has_future_assignments = True
-                    break
-                
-                # Check substage assignments
-                substages = assignment_data.get("substages", {})
-                for sub_name, substage_data in substages.items():
-                    if isinstance(substage_data, dict):
-                        substage_assignee = substage_data.get("assigned_to", "")
-                        if substage_assignee == assigned_username:
-                            # If it's the same substage that was just completed, skip it
-                            if remaining_stage_name == stage_name and sub_name == substage_name:
-                                continue
-                            user_has_future_assignments = True
-                            break
-                
-                if user_has_future_assignments:
-                    break
-        
-        # If user has no future assignments, remove project from their current projects
-        if not user_has_future_assignments:
-            from backend.users_backend import UserService, DatabaseManager
-            
-            db_manager = DatabaseManager()
-            user_service = UserService(db_manager)
-            
-            user_email = _get_user_email_from_username(assigned_username)
-            user_data = user_service.fetch_user_data(user_email)
-            
-            if user_data:
-                current_projects = user_data.get("project", [])
-                if project_name in current_projects:
-                    current_projects.remove(project_name)
-                    user_service.update_member(user_email, {"project": current_projects})
-                    
-    except Exception as e:
-        st.error(f"Error in substage completion cleanup: {str(e)}")
-
-# Helper function to convert username to email (adjust based on your email pattern)
-def _get_user_email_from_username(username):
-    """
-    Convert username to email format.
-    Adjust this function based on your actual email pattern.
-    """
-    if "@" in username:
-        return username  # Already an email
-    
-    # Common patterns - adjust as needed
-    possible_patterns = [
-        f"{username}@v-shesh.com"
-    ]
-    
-    # Try to find existing user with one of these patterns
-    from backend.users_backend import UserService, DatabaseManager
-    
-    try:
-        db_manager = DatabaseManager()
-        user_service = UserService(db_manager)
-        
-        for email_pattern in possible_patterns:
-            user_data = user_service.fetch_user_data(email_pattern)
-            if user_data:
-                return email_pattern
-                
-        # If no pattern works, return the first one as default
-        return possible_patterns[0]
-        
-    except Exception:
-        return f"{username}@v-shesh.com"  # Default fallback
-    
-
-
-def _remove_user_from_completed_project(project_name, username, current_level, project_levels, stage_assignments):
-    """
-    Remove project from user's current projects if they're not assigned to any future stages/substages.
-    Only called when a stage/substage is completed.
-    """
-    try:
-        from backend.users_backend import UserService, DatabaseManager
-        
-        db_manager = DatabaseManager()
-        user_service = UserService(db_manager)
-        
-        # Check if user is assigned to any future stages/substages
-        user_has_future_assignments = False
-        
-        # Get remaining stages (stages after current completed level)
-        remaining_stages = project_levels[current_level + 1:] if current_level + 1 < len(project_levels) else []
-        
-        for stage_name in remaining_stages:
-            assignment_data = stage_assignments.get(stage_name, {})
-            if isinstance(assignment_data, dict):
-                # Check main stage assignment
-                main_assignee = assignment_data.get("assigned_to", "")
-                if main_assignee == username:
-                    user_has_future_assignments = True
-                    break
-                
-                # Check substage assignments
-                substages = assignment_data.get("substages", {})
-                for substage_name, substage_data in substages.items():
-                    if isinstance(substage_data, dict):
-                        substage_assignee = substage_data.get("assigned_to", "")
-                        if substage_assignee == username:
-                            user_has_future_assignments = True
-                            break
-                
-                if user_has_future_assignments:
-                    break
-        
-        # If user has no future assignments, remove project from their current projects
-        if not user_has_future_assignments:
-            user_email = f"{username}@v-shesh.com"  # Adjust email pattern as needed
-            user_data = user_service.fetch_user_data(user_email)
-            
-            if user_data:
-                current_projects = user_data.get("project", [])
-                if project_name in current_projects:
-                    current_projects.remove(project_name)
-                    user_service.update_member(user_email, {"project": current_projects})
-                    
-        return True
-        
-    except Exception as e:
-        st.error(f"Error removing user from completed project: {str(e)}")
+        st.error(f"Error handling stage assignment change: {str(e)}")
         return False
 
 def handle_level_change(project, project_id, new_index, stage_assignments, context="dashboard"):
@@ -499,3 +340,30 @@ def handle_level_change(project, project_id, new_index, stage_assignments, conte
         st.rerun()
         return True
     return False
+
+def validate_and_sync_project_users(project_name, stage_assignments):
+    """
+    Validate and sync all users for a project
+    
+    Args:
+        project_name: Name of the project
+        stage_assignments: Dictionary of stage assignments
+    
+    Returns:
+        tuple: (success, message)
+    """
+    try:
+        from .project_helpers import validate_user_assignments, sync_all_stage_assignments_to_user_profiles
+        
+        # First validate all users exist
+        is_valid, invalid_users = validate_user_assignments(stage_assignments)
+        if not is_valid:
+            return False, f"Invalid users found: {', '.join(invalid_users)}"
+        
+        # Then sync all assignments
+        success_count = sync_all_stage_assignments_to_user_profiles(project_name, stage_assignments)
+        
+        return True, f"Project synced to {success_count} user profiles"
+        
+    except Exception as e:
+        return False, f"Error validating and syncing users: {str(e)}"

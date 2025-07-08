@@ -4,7 +4,9 @@ from utils.utils_project_core import (
     get_current_timestamp,
     notify_assigned_members,
 )
-
+from .project_helpers import(
+    _get_user_email_from_username,
+)
 class ProjectCompletionChecker:
     """Unified completion checker for projects, stages, and substages"""
     
@@ -253,3 +255,164 @@ def _auto_uncheck_main_stage(project, project_id, stage_index):
             # Set success message
             st.session_state[f"auto_uncheck_success_{project_id}_{stage_index}"] = True
             st.warning(f"⚠️ Stage {stage_index + 1} and subsequent stages automatically unchecked!")
+
+def _handle_stage_completion_cleanup(project, project_id, completed_level):
+    """
+    Handle cleanup when a stage is completed - remove users from project if no future assignments.
+    """
+    try:
+        project_name = project.get("name", "")
+        project_levels = project.get("levels", [])
+        stage_assignments = project.get("stage_assignments", {})
+        
+        if not project_name or completed_level >= len(project_levels):
+            return
+        
+        # Get the completed stage name
+        completed_stage_name = project_levels[completed_level]
+        completed_assignment = stage_assignments.get(completed_stage_name, {})
+        
+        # Collect users who completed this stage
+        completed_users = set()
+        
+        if isinstance(completed_assignment, dict):
+            # Main stage assignee
+            main_assignee = completed_assignment.get("assigned_to", "")
+            if main_assignee:
+                completed_users.add(main_assignee)
+            
+            # Substage assignees
+            substages = completed_assignment.get("substages", {})
+            for substage_name, substage_data in substages.items():
+                if isinstance(substage_data, dict):
+                    substage_assignee = substage_data.get("assigned_to", "")
+                    if substage_assignee:
+                        completed_users.add(substage_assignee)
+        
+        # Remove project from each user if they have no future assignments
+        for username in completed_users:
+            _remove_user_from_completed_project(
+                project_name, username, completed_level, project_levels, stage_assignments
+            )
+            
+    except Exception as e:
+        st.error(f"Error in stage completion cleanup: {str(e)}")
+
+def _handle_substage_completion_cleanup(project_name, stage_name, substage_name, assigned_username, project_levels, stage_assignments):
+    """
+    Handle cleanup when a substage is completed - remove user from project if no future assignments.
+    Call this function when a substage is marked as complete.
+    """
+    try:
+        if not assigned_username or not project_name:
+            return
+        
+        # Check if user has any future assignments in this project
+        user_has_future_assignments = False
+        
+        # Get current stage index
+        current_stage_index = -1
+        if stage_name in project_levels:
+            current_stage_index = project_levels.index(stage_name)
+        
+        # Check remaining stages (current stage and future stages)
+        remaining_stages = project_levels[current_stage_index:] if current_stage_index >= 0 else project_levels
+        
+        for remaining_stage_name in remaining_stages:
+            assignment_data = stage_assignments.get(remaining_stage_name, {})
+            if isinstance(assignment_data, dict):
+                # Check main stage assignment
+                main_assignee = assignment_data.get("assigned_to", "")
+                if main_assignee == assigned_username:
+                    user_has_future_assignments = True
+                    break
+                
+                # Check substage assignments
+                substages = assignment_data.get("substages", {})
+                for sub_name, substage_data in substages.items():
+                    if isinstance(substage_data, dict):
+                        substage_assignee = substage_data.get("assigned_to", "")
+                        if substage_assignee == assigned_username:
+                            # If it's the same substage that was just completed, skip it
+                            if remaining_stage_name == stage_name and sub_name == substage_name:
+                                continue
+                            user_has_future_assignments = True
+                            break
+                
+                if user_has_future_assignments:
+                    break
+        
+        # If user has no future assignments, remove project from their current projects
+        if not user_has_future_assignments:
+            from backend.users_backend import UserService, DatabaseManager
+            
+            db_manager = DatabaseManager()
+            user_service = UserService(db_manager)
+            
+            user_email = _get_user_email_from_username(assigned_username)
+            user_data = user_service.fetch_user_data(user_email)
+            
+            if user_data:
+                current_projects = user_data.get("project", [])
+                if project_name in current_projects:
+                    current_projects.remove(project_name)
+                    user_service.update_member(user_email, {"project": current_projects})
+                    
+    except Exception as e:
+        st.error(f"Error in substage completion cleanup: {str(e)}")
+
+
+def _remove_user_from_completed_project(project_name, username, current_level, project_levels, stage_assignments):
+    """
+    Remove project from user's current projects if they're not assigned to any future stages/substages.
+    Only called when a stage/substage is completed.
+    """
+    try:
+        from backend.users_backend import UserService, DatabaseManager
+        
+        db_manager = DatabaseManager()
+        user_service = UserService(db_manager)
+        
+        # Check if user is assigned to any future stages/substages
+        user_has_future_assignments = False
+        
+        # Get remaining stages (stages after current completed level)
+        remaining_stages = project_levels[current_level + 1:] if current_level + 1 < len(project_levels) else []
+        
+        for stage_name in remaining_stages:
+            assignment_data = stage_assignments.get(stage_name, {})
+            if isinstance(assignment_data, dict):
+                # Check main stage assignment
+                main_assignee = assignment_data.get("assigned_to", "")
+                if main_assignee == username:
+                    user_has_future_assignments = True
+                    break
+                
+                # Check substage assignments
+                substages = assignment_data.get("substages", {})
+                for substage_name, substage_data in substages.items():
+                    if isinstance(substage_data, dict):
+                        substage_assignee = substage_data.get("assigned_to", "")
+                        if substage_assignee == username:
+                            user_has_future_assignments = True
+                            break
+                
+                if user_has_future_assignments:
+                    break
+        
+        # If user has no future assignments, remove project from their current projects
+        if not user_has_future_assignments:
+            user_email = f"{username}@v-shesh.com"  # Adjust email pattern as needed
+            user_data = user_service.fetch_user_data(user_email)
+            
+            if user_data:
+                current_projects = user_data.get("project", [])
+                if project_name in current_projects:
+                    current_projects.remove(project_name)
+                    user_service.update_member(user_email, {"project": current_projects})
+                    
+        return True
+        
+    except Exception as e:
+        st.error(f"Error removing user from completed project: {str(e)}")
+        return False
