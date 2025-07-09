@@ -2,6 +2,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 from utils.utils_project_core import send_stage_assignment_email
 from backend.projects_backend import update_client_project_count
+from backend.users_backend import DatabaseManager, UserService
 
 def create_project_data(name, client, description, start, due):
     """Create project data dictionary"""
@@ -167,7 +168,6 @@ def sync_user_project_assignment(username, project_name, action="add"):
         bool: True if successful, False otherwise
     """
     try:
-        from backend.users_backend import DatabaseManager, UserService
         
         if not username or not project_name:
             return False
@@ -345,10 +345,7 @@ def _get_user_email_from_username(username):
     possible_patterns = [
         f"{username}@v-shesh.com"
     ]
-    
-    # Try to find existing user with one of these patterns
-    from backend.users_backend import UserService, DatabaseManager
-    
+    # Try to find existing user with one of these patterns    
     try:
         db_manager = DatabaseManager()
         user_service = UserService(db_manager)
@@ -370,12 +367,6 @@ def _get_user_email_from_username(username):
 def sync_user_assignment_changes(project_name, old_stage_assignments, new_stage_assignments):
     """
     Comprehensive sync when stage assignments change - handles both additions and removals
-    
-    Args:
-        project_name: Name of the project
-        old_stage_assignments: Previous stage assignments
-        new_stage_assignments: New stage assignments
-    
     Returns:
         bool: True if sync was successful
     """
@@ -514,25 +505,23 @@ def get_all_project_users(stage_assignments):
     for stage_data in stage_assignments.values():
         if isinstance(stage_data, dict):
             # Main stage assignee
-            main_assignee = stage_data.get("assigned_to", "")
-            if main_assignee and main_assignee.strip():
-                all_users.add(main_assignee.strip())
-            
+            #main_assignee = stage_data.get("assigned_to", "")
+            #if main_assignee and main_assignee.strip():
+                #all_users.add(main_assignee.strip())
             # Members list (if exists)
             members = stage_data.get("members", [])
             if isinstance(members, list):
                 for member in members:
                     if member and member.strip():
                         all_users.add(member.strip())
-            
             # Substage assignees
             substages = stage_data.get("substages", {})
-            for substage_data in substages.values():
+
+            for substage_data in substages:
                 if isinstance(substage_data, dict):
-                    substage_assignee = substage_data.get("assigned_to", "")
-                    if substage_assignee and substage_assignee.strip():
-                        all_users.add(substage_assignee.strip())
-    
+                    print("\nSUBSTAGE DATA::",substage_data)
+                    substage_assignee = substage_data.get("assignees",[])
+                    all_users.update(substage_assignee)
     return all_users
 
 def remove_project_from_unassigned_users(project_name, stage_assignments):
@@ -547,8 +536,6 @@ def remove_project_from_unassigned_users(project_name, stage_assignments):
         int: Number of users updated
     """
     try:
-        from backend.users_backend import DatabaseManager, UserService
-        
         db_manager = DatabaseManager()
         user_service = UserService(db_manager)
         
@@ -590,12 +577,10 @@ def validate_user_assignments(stage_assignments):
         tuple: (is_valid, list_of_invalid_users)
     """
     try:
-
+        print(stage_assignments,":::STAGE ASSIGNMENTS:::")
         if not isinstance(stage_assignments, dict):
             st.error("Stage assignments must be a dictionary.")
             return False, []
-
-        from backend.users_backend import DatabaseManager, UserService
         
         db_manager = DatabaseManager()
         user_service = UserService(db_manager)

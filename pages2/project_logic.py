@@ -33,7 +33,9 @@ from .project_helpers import (
     _display_success_messages,
     _send_stage_assignment_change_notifications,
     _get_user_email_from_username,
-    _validate_user_assignments,
+    validate_user_assignments,
+    sync_all_stage_assignments_to_user_profiles
+
 
 )
 
@@ -67,7 +69,6 @@ def _handle_create_project(name, client, description, start, due):
             return
         
         # Validate user assignments before creating project
-        from .project_helpers import validate_user_assignments
         is_valid, invalid_users = validate_user_assignments(stage_assignments)
         if not is_valid:
             st.error("Cannot create project - the following users don't exist in the database:")
@@ -127,7 +128,6 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
             return
         
         # Validate user assignments before saving
-        from .project_helpers import validate_user_assignments
         is_valid, invalid_users = validate_user_assignments(stage_assignments)
         if not is_valid:
             st.error("Cannot save project - the following users don't exist in the database:")
@@ -228,6 +228,7 @@ def handle_substage_assignment_change(project_name, stage_name, substage_name, o
     except Exception as e:
         st.error(f"Error handling substage assignment change: {str(e)}")
         return False
+    
 def handle_stage_assignment_change_realtime(project_name, stage_name, old_assignment, new_assignment):
     """
     Handle real-time user-project sync when stage assignment changes
@@ -353,7 +354,6 @@ def validate_and_sync_project_users(project_name, stage_assignments):
         tuple: (success, message)
     """
     try:
-        from .project_helpers import validate_user_assignments, sync_all_stage_assignments_to_user_profiles
         
         # First validate all users exist
         is_valid, invalid_users = validate_user_assignments(stage_assignments)
