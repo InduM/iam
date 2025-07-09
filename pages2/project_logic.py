@@ -22,7 +22,6 @@ from backend.projects_backend import (
     update_project_in_db,
     update_project_name_in_user_profiles,
     update_project_level_in_db,
-    move_project_to_completed,
     delete_project_from_db,
     remove_project_from_all_users,
 )
@@ -32,11 +31,8 @@ from .project_helpers import (
     _update_client_counts_after_edit,
     _display_success_messages,
     _send_stage_assignment_change_notifications,
-    _get_user_email_from_username,
     validate_user_assignments,
     sync_all_stage_assignments_to_user_profiles
-
-
 )
 
 from .project_completion import(
@@ -233,12 +229,6 @@ def handle_stage_assignment_change_realtime(project_name, stage_name, old_assign
     """
     Handle real-time user-project sync when stage assignment changes
     
-    Args:
-        project_name: Name of the project
-        stage_name: Name of the stage
-        old_assignment: Previous assignment data
-        new_assignment: New assignment data
-    
     Returns:
         bool: True if sync was successful
     """
@@ -339,7 +329,6 @@ def handle_level_change(project, project_id, new_index, stage_assignments, conte
         st.success("Project level updated!")
         time.sleep(0.1)
         st.rerun()
-        return True
     return False
 
 def validate_and_sync_project_users(project_name, stage_assignments):

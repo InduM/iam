@@ -205,7 +205,6 @@ def sync_user_project_assignment(username, project_name, action="add"):
                 user_service.update_member(user_email, {"project": current_projects})
                 return True
             return True  # Already doesn't exist, consider it success
-        
         return False
         
     except Exception as e:
@@ -230,16 +229,12 @@ def sync_stage_assignment_to_user_profiles(project_name, stage_name, assignment_
     success_count = 0
     users_to_sync = set()
     
-    # Get main stage assignee
-    main_assignee = assignment_data.get("assigned_to", "")
-    if main_assignee and main_assignee.strip():
-        users_to_sync.add(main_assignee.strip())
-    
+
     # Get substage assignees
     substages = assignment_data.get("substages", {})
     for substage_name, substage_data in substages.items():
         if isinstance(substage_data, dict):
-            substage_assignee = substage_data.get("assigned_to", "")
+            substage_assignee = substage_data.get("assignees", "")
             if substage_assignee and substage_assignee.strip():
                 users_to_sync.add(substage_assignee.strip())
     
@@ -291,28 +286,20 @@ def handle_stage_assignment_change(project_name, stage_name, old_assignment, new
         # Extract users from old assignment
         old_users = set()
         if isinstance(old_assignment, dict):
-            main_assignee = old_assignment.get("assigned_to", "")
-            if main_assignee and main_assignee.strip():
-                old_users.add(main_assignee.strip())
-            
             substages = old_assignment.get("substages", {})
             for substage_data in substages.values():
                 if isinstance(substage_data, dict):
-                    substage_assignee = substage_data.get("assigned_to", "")
+                    substage_assignee = substage_data.get("assignees", "")
                     if substage_assignee and substage_assignee.strip():
                         old_users.add(substage_assignee.strip())
         
         # Extract users from new assignment
         new_users = set()
         if isinstance(new_assignment, dict):
-            main_assignee = new_assignment.get("assigned_to", "")
-            if main_assignee and main_assignee.strip():
-                new_users.add(main_assignee.strip())
-            
             substages = new_assignment.get("substages", {})
             for substage_data in substages.values():
                 if isinstance(substage_data, dict):
-                    substage_assignee = substage_data.get("assigned_to", "")
+                    substage_assignee = substage_data.get("assignees", "")
                     if substage_assignee and substage_assignee.strip():
                         new_users.add(substage_assignee.strip())
         
@@ -340,29 +327,7 @@ def _get_user_email_from_username(username):
     """
     if "@" in username:
         return username  # Already an email
-    
-    # Common patterns - adjust as needed
-    possible_patterns = [
-        f"{username}@v-shesh.com"
-    ]
-    # Try to find existing user with one of these patterns    
-    try:
-        db_manager = DatabaseManager()
-        user_service = UserService(db_manager)
-        
-        for email_pattern in possible_patterns:
-            user_data = user_service.fetch_user_data(email_pattern)
-            if user_data:
-                return email_pattern
-                
-        # If no pattern works, return the first one as default
-        return possible_patterns[0]
-        
-    except Exception:
-        return f"{username}@v-shesh.com"  # Default fallback
-    
-
-
+    return f"{username}@v-shesh.com"  # Default fallback
 
 def sync_user_assignment_changes(project_name, old_stage_assignments, new_stage_assignments):
     """
@@ -376,11 +341,6 @@ def sync_user_assignment_changes(project_name, old_stage_assignments, new_stage_
         if isinstance(old_stage_assignments, dict):
             for stage_data in old_stage_assignments.values():
                 if isinstance(stage_data, dict):
-                    # Main stage assignee
-                    main_assignee = stage_data.get("assigned_to", "")
-                    if main_assignee and main_assignee.strip():
-                        old_users.add(main_assignee.strip())
-                    
                     # Members list (if exists)
                     members = stage_data.get("members", [])
                     if isinstance(members, list):
@@ -392,7 +352,7 @@ def sync_user_assignment_changes(project_name, old_stage_assignments, new_stage_
                     substages = stage_data.get("substages", {})
                     for substage_data in substages.values():
                         if isinstance(substage_data, dict):
-                            substage_assignee = substage_data.get("assigned_to", "")
+                            substage_assignee = substage_data.get("assignees", "")
                             if substage_assignee and substage_assignee.strip():
                                 old_users.add(substage_assignee.strip())
         
@@ -401,10 +361,6 @@ def sync_user_assignment_changes(project_name, old_stage_assignments, new_stage_
         if isinstance(new_stage_assignments, dict):
             for stage_data in new_stage_assignments.values():
                 if isinstance(stage_data, dict):
-                    # Main stage assignee
-                    main_assignee = stage_data.get("assigned_to", "")
-                    if main_assignee and main_assignee.strip():
-                        new_users.add(main_assignee.strip())
                     
                     # Members list (if exists)
                     members = stage_data.get("members", [])
@@ -417,7 +373,7 @@ def sync_user_assignment_changes(project_name, old_stage_assignments, new_stage_
                     substages = stage_data.get("substages", {})
                     for substage_data in substages.values():
                         if isinstance(substage_data, dict):
-                            substage_assignee = substage_data.get("assigned_to", "")
+                            substage_assignee = substage_data.get("assignees", "")
                             if substage_assignee and substage_assignee.strip():
                                 new_users.add(substage_assignee.strip())
         
@@ -454,17 +410,79 @@ def sync_single_user_assignment(username, project_name, action="add"):
     except Exception as e:
         st.error(f"Error syncing single user assignment: {str(e)}")
         return False
+
+def sync_substage_assignment(project_name, stage_name, substage_name, assignee_data):
+    """
+    Sync users when a substage assignment is updated
+    Returns:
+        bool: True if sync was successful
+    """
+    try:
+        users_to_sync = set()
+        
+        # Handle different assignee data formats
+        if isinstance(assignee_data, str) and assignee_data.strip():
+            users_to_sync.add(assignee_data.strip())
+        elif isinstance(assignee_data, list):
+            for assignee in assignee_data:
+                if assignee and assignee.strip():
+                    users_to_sync.add(assignee.strip())
+        elif isinstance(assignee_data, dict):
+            # Handle dictionary format
+            assigned_to = assignee_data.get("assignees", "")
+            if assigned_to and assigned_to.strip():
+                users_to_sync.add(assigned_to.strip())
+            
+            assignees = assignee_data.get("assignees", [])
+            if isinstance(assignees, list):
+                for assignee in assignees:
+                    if assignee and assignee.strip():
+                        users_to_sync.add(assignee.strip())
+        
+        # Sync each user
+        for username in users_to_sync:
+            sync_user_project_assignment(username, project_name, "add")
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error syncing substage assignment: {str(e)}")
+        return False
     
+def validate_and_sync_project_assignments(project_data):
+    """
+    Validate all user assignments exist and sync them to the project
+    
+    Args:
+        project_data: Complete project data dictionary
+    
+    Returns:
+        tuple: (is_valid, list_of_invalid_users, sync_successful)
+    """
+    try:
+        project_name = project_data.get("name", "")
+        stage_assignments = project_data.get("stage_assignments", {})
+        
+        # First validate all users exist
+        is_valid, invalid_users = validate_user_assignments(stage_assignments)
+        
+        if not is_valid:
+            st.error(f"❌ Invalid users found: {', '.join(invalid_users)}")
+            return False, invalid_users, False
+        
+        # If validation passes, sync the assignments
+        sync_successful = sync_project_users_on_creation(project_data)
+        
+        return True, [], sync_successful
+        
+    except Exception as e:
+        st.error(f"Error validating and syncing project assignments: {str(e)}")
+        return False, [], False
+
+
 def sync_substage_assignment_change(project_name, stage_name, substage_name, old_assignee, new_assignee):
     """
     Handle user-project sync when a substage assignment changes
-    
-    Args:
-        project_name: Name of the project
-        stage_name: Name of the stage
-        substage_name: Name of the substage
-        old_assignee: Previous assignee username
-        new_assignee: New assignee username
     
     Returns:
         bool: True if sync was successful
@@ -499,30 +517,157 @@ def get_all_project_users(stage_assignments):
     all_users = set()
     
     if not isinstance(stage_assignments, dict):
-        print("stage assignments is not a dict")
         return all_users
     
     for stage_data in stage_assignments.values():
         if isinstance(stage_data, dict):
-            # Main stage assignee
-            #main_assignee = stage_data.get("assigned_to", "")
-            #if main_assignee and main_assignee.strip():
-                #all_users.add(main_assignee.strip())
             # Members list (if exists)
             members = stage_data.get("members", [])
             if isinstance(members, list):
                 for member in members:
                     if member and member.strip():
-                        all_users.add(member.strip())
+                        all_users.add(member.strip())      
             # Substage assignees
             substages = stage_data.get("substages", {})
-
-            for substage_data in substages:
+            for substage_data in substages.values():
                 if isinstance(substage_data, dict):
-                    print("\nSUBSTAGE DATA::",substage_data)
-                    substage_assignee = substage_data.get("assignees",[])
-                    all_users.update(substage_assignee)
+                    assignees = substage_data.get("assignees", [])
+                    if isinstance(assignees, list):
+                        for assignee in assignees:
+                            if assignee and assignee.strip():
+                                all_users.add(assignee.strip())
+    
     return all_users
+
+def sync_project_users_on_creation(project_data):
+    """
+    Sync all users to project when a new project is created
+    
+    Args:
+        project_data: Complete project data dictionary
+    
+    Returns:
+        bool: True if sync was successful
+    """
+    try:
+        project_name = project_data.get("name", "")
+        stage_assignments = project_data.get("stage_assignments", {})
+        
+        if not project_name:
+            return False
+        
+        # Get all users assigned to this project
+        all_users = get_all_project_users(stage_assignments)
+        
+        # Add project to each user's profile
+        success_count = 0
+        for username in all_users:
+            if sync_user_project_assignment(username, project_name, "add"):
+                success_count += 1
+        
+        # Log success
+        if success_count > 0:
+            st.success(f"✅ Project added to {success_count} user profiles")
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error syncing project users on creation: {str(e)}")
+        return False
+    
+def sync_project_users_on_update(project_name, old_stage_assignments, new_stage_assignments):
+    """
+    Comprehensive sync when project is updated - handles both additions and removals
+    
+    Args:
+        project_name: Name of the project
+        old_stage_assignments: Previous stage assignments
+        new_stage_assignments: New stage assignments
+    
+    Returns:
+        bool: True if sync was successful
+    """
+    try:
+        # Get users from old and new assignments
+        old_users = get_all_project_users(old_stage_assignments or {})
+        new_users = get_all_project_users(new_stage_assignments or {})
+        
+        # Users to add (newly assigned)
+        users_to_add = new_users - old_users
+        # Users to remove (no longer assigned)
+        users_to_remove = old_users - new_users
+        
+        success_count = 0
+        
+        # Add project to newly assigned users
+        for username in users_to_add:
+            if sync_user_project_assignment(username, project_name, "add"):
+                success_count += 1
+        
+        # Remove project from users no longer assigned
+        for username in users_to_remove:
+            if sync_user_project_assignment(username, project_name, "remove"):
+                success_count += 1
+        
+        # Log changes
+        if users_to_add:
+            st.success(f"✅ Project added to {len(users_to_add)} new users")
+        if users_to_remove:
+            st.info(f"ℹ️ Project removed from {len(users_to_remove)} users")
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error syncing project users on update: {str(e)}")
+        return False
+
+
+def sync_single_stage_assignment(project_name, stage_name, assignment_data):
+    """
+    Sync users when a single stage assignment is updated in real-time
+    
+    Args:
+        project_name: Name of the project
+        stage_name: Name of the stage
+        assignment_data: Stage assignment data
+    
+    Returns:
+        bool: True if sync was successful
+    """
+    try:
+        if not isinstance(assignment_data, dict):
+            return False
+        
+        users_to_sync = set()
+        
+        # Get members
+        members = assignment_data.get("members", [])
+        if isinstance(members, list):
+            for member in members:
+                if member and member.strip():
+                    users_to_sync.add(member.strip())
+        
+        # Get substage assignees
+        substages = assignment_data.get("substages", {})
+        for substage_data in substages.values():
+            if isinstance(substage_data, dict):
+                # Handle multiple assignees
+                assignees = substage_data.get("assignees", [])
+                if isinstance(assignees, list):
+                    for assignee in assignees:
+                        if assignee and assignee.strip():
+                            users_to_sync.add(assignee.strip())
+        
+        # Sync each user
+        for username in users_to_sync:
+            sync_user_project_assignment(username, project_name, "add")
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error syncing single stage assignment: {str(e)}")
+        return False
+
 
 def remove_project_from_unassigned_users(project_name, stage_assignments):
     """
@@ -577,7 +722,6 @@ def validate_user_assignments(stage_assignments):
         tuple: (is_valid, list_of_invalid_users)
     """
     try:
-        print(stage_assignments,":::STAGE ASSIGNMENTS:::")
         if not isinstance(stage_assignments, dict):
             st.error("Stage assignments must be a dictionary.")
             return False, []
@@ -593,9 +737,134 @@ def validate_user_assignments(stage_assignments):
             user_data = user_service.fetch_user_data(user_email)
             if not user_data:
                 invalid_users.append(username)
-        
         return len(invalid_users) == 0, invalid_users
         
     except Exception as e:
         st.error(f"Error validating user assignments: {str(e)}")
         return False, []
+    
+
+# Integration functions to call from your main project creation/update code
+
+def handle_project_creation_with_sync(project_data):
+    """
+    Handle project creation with automatic user synchronization
+    Call this when creating a new project
+    
+    Args:
+        project_data: Complete project data dictionary
+    
+    Returns:
+        bool: True if creation and sync were successful
+    """
+    try:
+        # Validate and sync users
+        is_valid, invalid_users, sync_successful = validate_and_sync_project_assignments(project_data)
+        
+        if not is_valid:
+            st.error(f"Cannot create project: Invalid users {', '.join(invalid_users)}")
+            return False
+        
+        # Send stage assignment notifications
+        send_stage_assignment_notifications(project_data)
+        
+        return sync_successful
+        
+    except Exception as e:
+        st.error(f"Error handling project creation: {str(e)}")
+        return False
+
+def handle_project_update_with_sync(project_name, old_project_data, new_project_data):
+    """
+    Handle project update with automatic user synchronization
+    Call this when updating an existing project
+    
+    Args:
+        project_name: Name of the project
+        old_project_data: Previous project data
+        new_project_data: Updated project data
+    
+    Returns:
+        bool: True if update and sync were successful
+    """
+    try:
+        old_stage_assignments = old_project_data.get("stage_assignments", {})
+        new_stage_assignments = new_project_data.get("stage_assignments", {})
+        
+        # Validate new assignments
+        is_valid, invalid_users = validate_user_assignments(new_stage_assignments)
+        
+        if not is_valid:
+            st.error(f"Cannot update project: Invalid users {', '.join(invalid_users)}")
+            return False
+        
+        # Sync user assignments
+        sync_successful = sync_project_users_on_update(
+            project_name, old_stage_assignments, new_stage_assignments
+        )
+        
+        # Send notifications for changed assignments
+        _send_stage_assignment_change_notifications(
+            new_stage_assignments, old_stage_assignments, project_name
+        )
+        
+        return sync_successful
+        
+    except Exception as e:
+        st.error(f"Error handling project update: {str(e)}")
+        return False
+
+def handle_stage_assignment_change_with_sync(project_name, stage_name, old_assignment, new_assignment):
+    """
+    Handle real-time stage assignment changes with user synchronization
+    Call this when a stage assignment is modified in the UI
+    
+    Args:
+        project_name: Name of the project
+        stage_name: Name of the stage
+        old_assignment: Previous assignment data
+        new_assignment: New assignment data
+    
+    Returns:
+        bool: True if sync was successful
+    """
+    try:
+        # Sync the new assignment
+        sync_successful = sync_single_stage_assignment(project_name, stage_name, new_assignment)
+        
+        # Handle the change notification
+        handle_stage_assignment_change(project_name, stage_name, old_assignment, new_assignment)
+        
+        return sync_successful
+        
+    except Exception as e:
+        st.error(f"Error handling stage assignment change: {str(e)}")
+        return False
+
+def handle_substage_assignment_change_with_sync(project_name, stage_name, substage_name, old_assignee, new_assignee):
+    """
+    Handle real-time substage assignment changes with user synchronization
+    Call this when a substage assignment is modified in the UI
+    
+    Args:
+        project_name: Name of the project
+        stage_name: Name of the stage
+        substage_name: Name of the substage
+        old_assignee: Previous assignee data
+        new_assignee: New assignee data
+    
+    Returns:
+        bool: True if sync was successful
+    """
+    try:
+        # Sync the new substage assignment
+        sync_successful = sync_substage_assignment(project_name, stage_name, substage_name, new_assignee)
+        
+        # Handle the change (this already exists in your code)
+        sync_substage_assignment_change(project_name, stage_name, substage_name, old_assignee, new_assignee)
+        
+        return sync_successful
+        
+    except Exception as e:
+        st.error(f"Error handling substage assignment change: {str(e)}")
+        return False

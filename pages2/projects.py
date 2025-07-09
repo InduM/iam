@@ -88,7 +88,7 @@ def show_dashboard():
 
 def show_create_form():
     """Display the create project form with substage support and proper field reset"""
-    st.title("🛠 Create Project")
+    st.title("Create Project")
     
     # ENHANCED: Proper form state initialization and reset
     initialize_create_form_state()
@@ -133,7 +133,7 @@ def show_create_form():
     else:
         render_custom_levels_editor()
     
-    team_members = get_team_members(st.session_state.get("role", ""))
+    team_members = get_team_members_username(st.session_state.get("role", ""))
     
     # Enhanced Stage Assignments Section with Substages
     st.markdown("---")
@@ -216,7 +216,7 @@ def show_edit_form():
     start = st.date_input("Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
     due = st.date_input("Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
     
-    team_members = get_team_members(st.session_state.get("role", ""))    
+    team_members = get_team_members_username(st.session_state.get("role", ""))    
     
     # Stage Assignments Section - always use fresh data
     st.markdown("---")
