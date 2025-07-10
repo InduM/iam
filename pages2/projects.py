@@ -20,9 +20,6 @@ from .project_logic import (
     _handle_save_project,
     handle_level_change,
 )
-from .project_helpers import (
-    _check_edit_success_messages
-)
 
 def run():
     """Main function to run the project management interface"""
@@ -259,7 +256,7 @@ def show_edit_form():
         handle_level_change(fresh_proj or project, pid, new_index, fresh_assignments,"edit")
     
     # Check for success messages
-    _check_edit_success_messages(pid)
+   # _check_edit_success_messages(pid)
     
     # Render level checkboxes with fresh data
     render_level_checkboxes_with_substages(

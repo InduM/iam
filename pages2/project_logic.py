@@ -28,11 +28,11 @@ from backend.projects_backend import (
 )
 from .project_helpers import (
     create_project_data, create_updated_project_data,
-    send_stage_assignment_notifications,
     _update_client_counts_after_edit,
-    _send_stage_assignment_change_notifications,
-    validate_user_assignments,
-    sync_all_stage_assignments_to_user_profiles
+    validate_users_exist,
+    extract_project_users,
+    sync_user_project_assignments,
+    send_assignment_notifications
 )
 
 from .project_completion import(
@@ -66,13 +66,19 @@ def _handle_create_project(name, client, description, start, due):
             return
         
         # Validate user assignments before creating project
-        is_valid, invalid_users = validate_user_assignments(stage_assignments)
+        assigned_users = extract_project_users(stage_assignments)
+        is_valid, invalid_users = validate_users_exist(stage_assignments)
         if not is_valid:
             st.error("Cannot create project - the following users don't exist in the database:")
             for user in invalid_users:
                 st.error(f"• {user}")
             return
-        
+         # Sync users to project
+        sync_result = sync_user_project_assignments(project_name, users_to_add=assigned_users)
+
+
+
+
         new_proj = create_project_data(name, client, description, start, due)
         
         # Ensure new project has clean substage completion data
@@ -88,16 +94,23 @@ def _handle_create_project(name, client, description, start, due):
             # Update client project count
             update_client_project_count(client)
             
-            # Send stage assignment notifications
-            send_stage_assignment_notifications(new_proj)
-            
             # Add project to manager
             add_project_to_manager(st.session_state.get("username", ""), name)
-            
-            # ENHANCED: Sync all stage assignments to user profiles
-            success_count = sync_all_stage_assignments_to_user_profiles(name, stage_assignments)
-            if success_count > 0:
-                st.success(f"✅ Project added to {success_count} user profiles!")
+            sync_result = sync_user_project_assignments(project_name, users_to_add=assigned_users)
+            if sync_result["success"]:
+                # Send notifications
+                send_assignment_notifications(project_name, stage_assignments)
+                
+                # Update client count
+                update_client_project_count(client)
+                
+                if sync_result["added"] > 0:
+                    st.success(f"✅ Project created and added to {sync_result['added']} user profiles")
+                
+                return True
+            else:
+                st.error("❌ Failed to sync user assignments")
+                return False
             
             # Complete form state reset
             _reset_create_form_state()

@@ -23,11 +23,6 @@ from .project_completion import(
     _auto_uncheck_main_stage,
     _has_substages,
 )
-from .project_helpers import (
-    _handle_email_reminders,
-    _check_dashboard_success_messages,
-)
-
 # Helper Functions
 def _detect_form_context(project_id):
     """Centralized form context detection"""
@@ -204,8 +199,7 @@ def render_project_card(project, index):
             
             handle_level_change(proj,proj_id, new_index, stage_assignments,"dashboard")
         
-        # Check for success messages
-        _check_dashboard_success_messages(pid)
+    
         
         # Auto-advance and auto-uncheck messages
         for i in range(len(levels)):
@@ -225,8 +219,8 @@ def render_project_card(project, index):
             editable=True, stage_assignments=stage_assignments, project=project
         )
         
-        # Email reminder logic
-        _handle_email_reminders(project, pid, levels, current_level)
+        # Email reminder logic####IMPORTANT ::: IMplement it later
+        #_handle_email_reminders(project, pid, levels, current_level)
         
         # Mobile-friendly action buttons
         _render_project_action_buttons(project, pid)
