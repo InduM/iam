@@ -1,5 +1,6 @@
 import streamlit as st
 from datetime import datetime, date
+from backend.projects_backend import update_client_project_count
 from typing import List, Dict
 import yagmail
 
@@ -294,3 +295,62 @@ def notify_assigned_members(stage_assignments: Dict, project_name: str, current_
             # In a real implementation, you'd get email addresses from user profiles
             # For now, we'll just show a success message
             st.info(f"Notification sent to {', '.join(members)} for stage '{stage_name}'")
+
+
+def _get_user_email_from_username(username):
+    """Convert username to email format"""
+    if "@" in username:
+        return username
+    return f"{username}@v-shesh.com"
+
+def _update_client_counts_after_edit(project, new_client):
+    """Update client project counts after editing"""
+    update_client_project_count(new_client)
+    
+    old_client = project.get("client", "")
+    if new_client != old_client:
+        update_client_project_count(old_client)
+
+def display_success_messages(messages=None):
+    """Display success messages"""
+    if messages:
+        for message in messages:
+            st.success(message)
+    else:
+        st.success("Changes saved to database!")
+
+def check_success_messages(pid, context="dashboard"):
+    """Check and display success messages"""
+    key_prefix = "edit_" if context == "edit" else ""
+    
+    if st.session_state.get(f"{key_prefix}level_update_success_{pid}", False):
+        st.success("Project level updated!")
+        st.session_state[f"{key_prefix}level_update_success_{pid}"] = False
+    
+    if st.session_state.get(f"project_completed_message_{pid}"):
+        st.success(st.session_state[f"project_completed_message_{pid}"])
+        st.session_state[f"project_completed_message_{pid}"] = False
+
+def handle_email_reminders(project, pid, levels, current_level):
+    """Handle email reminder logic"""
+    project_name = project.get("name", "Unnamed")
+    lead_email = st.secrets.get("project_leads", {}).get("Project Alpha")
+    
+    # Safe check for Invoice and Payment levels
+    try:
+        invoice_index = levels.index("Invoice") if "Invoice" in levels else -1
+        payment_index = levels.index("Payment") if "Payment" in levels else -1
+    except (ValueError, AttributeError):
+        invoice_index = -1
+        payment_index = -1
+    
+    email_key = f"last_email_sent_{pid}"
+    if email_key not in st.session_state:
+        st.session_state[email_key] = None
+    
+    if (0 <= invoice_index <= current_level) and (payment_index > current_level) and lead_email:
+        now = datetime.now()
+        last_sent = st.session_state[email_key]
+        if not last_sent or now - last_sent >= timedelta(minutes=1):
+            if send_invoice_email(lead_email, project_name):
+                st.session_state[email_key] = now

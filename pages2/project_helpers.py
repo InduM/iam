@@ -56,13 +56,6 @@ def _update_client_counts_after_edit(project, new_client):
     if new_client != old_client:
         update_client_project_count(old_client)
 
-def _display_success_messages(messages):
-    """Display success messages"""
-    if messages:
-        for message in messages:
-            st.success(message)
-    else:
-        st.success("Changes saved to database!")
 
 def _get_member_emails(members):
     """Helper function to construct member email addresses"""
@@ -590,7 +583,6 @@ def sync_project_users_on_update(project_name, old_stage_assignments, new_stage_
         st.error(f"Error syncing project users on update: {str(e)}")
         print(f"Error syncing project users on update: {str(e)}")
         return False
-
 
 def sync_single_stage_assignment(project_name, stage_name, assignment_data):
     """

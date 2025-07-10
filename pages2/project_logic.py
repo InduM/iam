@@ -8,6 +8,7 @@ from utils.utils_project_core import (
     validate_project_dates,
     get_current_timestamp,
     notify_assigned_members,
+    display_success_messages,
 )
 
 from utils.utils_project_form import (
@@ -29,7 +30,6 @@ from .project_helpers import (
     create_project_data, create_updated_project_data,
     send_stage_assignment_notifications,
     _update_client_counts_after_edit,
-    _display_success_messages,
     _send_stage_assignment_change_notifications,
     validate_user_assignments,
     sync_all_stage_assignments_to_user_profiles
@@ -56,6 +56,7 @@ def _handle_create_project(name, client, description, start, due):
     else:
         # Validate stage and substage dates
         stage_assignments = st.session_state.get("stage_assignments", {})
+        project_name = name
         date_errors = validate_stage_substage_dates(stage_assignments, due)
         
         if date_errors:
@@ -94,7 +95,6 @@ def _handle_create_project(name, client, description, start, due):
             add_project_to_manager(st.session_state.get("username", ""), name)
             
             # ENHANCED: Sync all stage assignments to user profiles
-            from .project_helpers import sync_all_stage_assignments_to_user_profiles
             success_count = sync_all_stage_assignments_to_user_profiles(name, stage_assignments)
             if success_count > 0:
                 st.success(f"✅ Project added to {success_count} user profiles!")
@@ -176,7 +176,7 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
             project.update(updated_project)
             
             # Display success messages
-            _display_success_messages(success_messages)
+            display_success_messages(success_messages)
             
             st.session_state.view = "dashboard"
             st.rerun()
@@ -202,44 +202,6 @@ def _handle_project_deletion(pid, project):
     st.session_state.confirm_delete[f"confirm_delete_{pid}"] = False
     st.rerun()
 
-def handle_substage_assignment_change(project_name, stage_name, substage_name, old_assignee, new_assignee):
-    """
-    Handle real-time user-project sync when substage assignment changes
-    
-    Args:
-        project_name: Name of the project
-        stage_name: Name of the stage
-        substage_name: Name of the substage
-        old_assignee: Previous assignee username
-        new_assignee: New assignee username
-    
-    Returns:
-        bool: True if sync was successful
-    """
-    try:
-        from .project_helpers import sync_substage_assignment_change
-        return sync_substage_assignment_change(
-            project_name, stage_name, substage_name, old_assignee, new_assignee
-        )
-    except Exception as e:
-        st.error(f"Error handling substage assignment change: {str(e)}")
-        return False
-    
-def handle_stage_assignment_change_realtime(project_name, stage_name, old_assignment, new_assignment):
-    """
-    Handle real-time user-project sync when stage assignment changes
-    
-    Returns:
-        bool: True if sync was successful
-    """
-    try:
-        from .project_helpers import handle_stage_assignment_change
-        return handle_stage_assignment_change(
-            project_name, stage_name, old_assignment, new_assignment
-        )
-    except Exception as e:
-        st.error(f"Error handling stage assignment change: {str(e)}")
-        return False
 
 def handle_level_change(project, project_id, new_index, stage_assignments, context="dashboard"):
     """
@@ -330,29 +292,3 @@ def handle_level_change(project, project_id, new_index, stage_assignments, conte
         time.sleep(0.1)
         st.rerun()
     return False
-
-def validate_and_sync_project_users(project_name, stage_assignments):
-    """
-    Validate and sync all users for a project
-    
-    Args:
-        project_name: Name of the project
-        stage_assignments: Dictionary of stage assignments
-    
-    Returns:
-        tuple: (success, message)
-    """
-    try:
-        
-        # First validate all users exist
-        is_valid, invalid_users = validate_user_assignments(stage_assignments)
-        if not is_valid:
-            return False, f"Invalid users found: {', '.join(invalid_users)}"
-        
-        # Then sync all assignments
-        success_count = sync_all_stage_assignments_to_user_profiles(project_name, stage_assignments)
-        
-        return True, f"Project synced to {success_count} user profiles"
-        
-    except Exception as e:
-        return False, f"Error validating and syncing users: {str(e)}"
