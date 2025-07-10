@@ -48,6 +48,11 @@ class UserService:
                 d["project"] = []
         return data
     
+
+    def get_all_users(self):
+        """Get all the usernames from MongoDB """
+        return self.collection.find()
+
     def fetch_user_data(self, email):
         """Fetch the latest user data from MongoDB by email"""
         user_data = self.collection.find_one({"email": email}, {"_id": 0})
