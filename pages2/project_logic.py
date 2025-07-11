@@ -67,7 +67,7 @@ def _handle_create_project(name, client, description, start, due):
         
         # Validate user assignments before creating project
         assigned_users = extract_project_users(stage_assignments)
-        is_valid, invalid_users = validate_users_exist(stage_assignments)
+        is_valid, invalid_users = validate_users_exist(assigned_users)
         if not is_valid:
             st.error("Cannot create project - the following users don't exist in the database:")
             for user in invalid_users:
@@ -76,14 +76,7 @@ def _handle_create_project(name, client, description, start, due):
          # Sync users to project
         sync_result = sync_user_project_assignments(project_name, users_to_add=assigned_users)
 
-
-
-
         new_proj = create_project_data(name, client, description, start, due)
-        
-        # Ensure new project has clean substage completion data
-        new_proj["substage_completion"] = {}
-        new_proj["substage_timestamps"] = {}
         
         project_id = save_project_to_db(new_proj)
         if project_id:
@@ -96,7 +89,6 @@ def _handle_create_project(name, client, description, start, due):
             
             # Add project to manager
             add_project_to_manager(st.session_state.get("username", ""), name)
-            sync_result = sync_user_project_assignments(project_name, users_to_add=assigned_users)
             if sync_result["success"]:
                 # Send notifications
                 send_assignment_notifications(project_name, stage_assignments)
@@ -106,12 +98,9 @@ def _handle_create_project(name, client, description, start, due):
                 
                 if sync_result["added"] > 0:
                     st.success(f"✅ Project created and added to {sync_result['added']} user profiles")
-                
-                return True
             else:
+                print("SYNC RESULT:", sync_result)
                 st.error("❌ Failed to sync user assignments")
-                return False
-            
             # Complete form state reset
             _reset_create_form_state()
             
@@ -120,7 +109,8 @@ def _handle_create_project(name, client, description, start, due):
             st.rerun()
 
 # UPDATED FUNCTION: Enhanced save project handler with date validation
-def _handle_save_project(pid, project, name, client, description, start, due, original_team, original_name, stage_assignments):
+# update logic in https://claude.ai/chat/22923190-8e0c-458d-a860-ed65ffb2a9a0
+def handle_save_project(pid, project, name, client, description, start, due, original_name, stage_assignments):
     """Enhanced save project handler with comprehensive user-project sync"""
     if not validate_project_dates(start, due):
         st.error("Cannot save: Due date must be later than the start date.")
@@ -137,7 +127,8 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
             return
         
         # Validate user assignments before saving
-        is_valid, invalid_users = validate_user_assignments(stage_assignments)
+        assigned_users = extract_project_users(stage_assignments)
+        is_valid, invalid_users = validate_users_exist(assigned_users)
         if not is_valid:
             st.error("Cannot save project - the following users don't exist in the database:")
             for user in invalid_users:
@@ -148,12 +139,7 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
         old_stage_assignments = project.get("stage_assignments", {})
         
         updated_project = create_updated_project_data(project, name, client, description, start, due, stage_assignments)
-        
-        # Include substage completion data
-        if "substage_completion" in project:
-            updated_project["substage_completion"] = project["substage_completion"]
-        if "substage_timestamps" in project:
-            updated_project["substage_timestamps"] = project["substage_timestamps"]
+        new_assignments = updated_project.get("stage_assignments", {})
         
         if update_project_in_db(pid, updated_project):
             success_messages = []
@@ -170,21 +156,46 @@ def _handle_save_project(pid, project, name, client, description, start, due, or
             # Handle stage assignment changes with comprehensive user sync
             if stage_assignments != old_stage_assignments:
                 success_messages.append("Stage assignments updated!")
-                _send_stage_assignment_change_notifications(stage_assignments, old_stage_assignments, name)
+                send_assignment_notifications(name,stage_assignments, old_assignments=old_stage_assignments)
                 
                 # ENHANCED: Comprehensive user-project sync
-                from .project_helpers import sync_user_assignment_changes
-                sync_success = sync_user_assignment_changes(
-                    name, old_stage_assignments, stage_assignments
-                )
-                if sync_success:
-                    success_messages.append("✅ User project assignments synchronized!")
+                old_users = extract_project_users(old_stage_assignments)
+                new_users = extract_project_users(new_assignments)
+                # Validate new users
+                is_valid, invalid_users = validate_users_exist(new_users)
+                if not is_valid:
+                    st.error(f"❌ Cannot update project: Invalid users {', '.join(invalid_users)}")
+                    return False
                 
-                # Also clean up unassigned users
-                from .project_helpers import remove_project_from_unassigned_users
-                removed_count = remove_project_from_unassigned_users(name, stage_assignments)
-                if removed_count > 0:
-                    success_messages.append(f"🧹 Project removed from {removed_count} unassigned user profiles!")
+                # Calculate changes
+                users_to_add = new_users - old_users
+                users_to_remove = old_users - new_users
+                sync_result = sync_user_project_assignments(
+                        name, 
+                        users_to_add=users_to_add, 
+                        users_to_remove=users_to_remove
+                    )
+                print("SYNC RESULT::", sync_result) 
+                if sync_result["success"]:
+            # Send notifications for changes
+                    send_assignment_notifications(
+                        name, 
+                        new_assignments, 
+                        changed_assignments_only=True, 
+                        old_assignments=old_stage_assignments)
+                
+                
+                 # Update client counts
+                _update_client_counts_after_edit(project, updated_project.get("client", ""))
+                
+                # Display results
+                if sync_result["added"] > 0:
+                    st.success(f"✅ Project added to {sync_result['added']} new users")
+                if sync_result["removed"] > 0:
+                    st.info(f"ℹ️ Project removed from {sync_result['removed']} users")
+                
+            else:
+                st.error("❌ Failed to sync user assignment changes")
             
             project.update(updated_project)
             

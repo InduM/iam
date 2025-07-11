@@ -128,3 +128,24 @@ class ClientsBackend:
         except Exception as e:
             st.error(f"Error counting related projects: {e}")
             return 0
+    # Optional: Add this method to the backend for additional safety
+    def can_delete_client(self, client_name):
+        """Check if a client can be safely deleted (no associated projects)"""
+        project_count = self.count_related_projects(client_name)
+        return project_count == 0
+
+    # Optional: Enhanced delete method with safety check
+    def delete_client_safe(self, cid):
+        """Delete client only if no associated projects exist"""
+        # Get client data first
+        client = self.get_client_by_id(cid)
+        if not client:
+            return False
+        
+        # Check for associated projects
+        client_name = client.get('client_name', '')
+        if not self.can_delete_client(client_name):
+            return False
+        
+        # Proceed with deletion
+        return self.delete_client(cid)

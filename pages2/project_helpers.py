@@ -165,8 +165,8 @@ def extract_project_users(stage_assignments):
                 all_users.update(members)
             
             # Substage assignees
-            substages = stage_data.get("substages", {})
-            for substage_data in substages.values():
+            substages = stage_data.get("substages", [])
+            for substage_data in substages:
                 if isinstance(substage_data, dict):
                     assignees = substage_data.get("assignees", [])
                     if isinstance(assignees, list):
@@ -204,6 +204,7 @@ def validate_users_exist(usernames):
         return False, []
     
 
+##````cant understand the implementation
 def send_assignment_notifications(project_name, stage_assignments, changed_assignments_only=False, old_assignments=None):
     """
     Send email notifications for stage assignments
@@ -249,116 +250,6 @@ def send_assignment_notifications(project_name, stage_assignments, changed_assig
 
 # ==============================================================================
 # HIGH-LEVEL PROJECT MANAGEMENT FUNCTIONS
-# ==============================================================================
-
-def handle_project_creation(project_data):
-    """
-    Complete project creation handler with validation and sync
-    
-    Args:
-        project_data: Complete project data dictionary
-    
-    Returns:
-        bool: True if creation was successful
-    """
-    try:
-        project_name = project_data.get("name", "")
-        stage_assignments = project_data.get("stage_assignments", {})
-        
-        # Extract and validate users
-        assigned_users = extract_project_users(stage_assignments)
-        is_valid, invalid_users = validate_users_exist(assigned_users)
-        
-        if not is_valid:
-            st.error(f"❌ Cannot create project: Invalid users {', '.join(invalid_users)}")
-            return False
-        
-        # Sync users to project
-        sync_result = sync_user_project_assignments(project_name, users_to_add=assigned_users)
-        
-        if sync_result["success"]:
-            # Send notifications
-            send_assignment_notifications(project_name, stage_assignments)
-            
-            # Update client count
-            update_client_project_count(project_data.get("client", ""))
-            
-            if sync_result["added"] > 0:
-                st.success(f"✅ Project created and added to {sync_result['added']} user profiles")
-            
-            return True
-        else:
-            st.error("❌ Failed to sync user assignments")
-            return False
-            
-    except Exception as e:
-        st.error(f"❌ Error creating project: {str(e)}")
-        return False
-
-def handle_project_update(project_name, old_project_data, new_project_data):
-    """
-    Complete project update handler with validation and sync
-    
-    Args:
-        project_name: Name of the project
-        old_project_data: Previous project data
-        new_project_data: Updated project data
-    
-    Returns:
-        bool: True if update was successful
-    """
-    try:
-        old_assignments = old_project_data.get("stage_assignments", {})
-        new_assignments = new_project_data.get("stage_assignments", {})
-        
-        # Extract users
-        old_users = extract_project_users(old_assignments)
-        new_users = extract_project_users(new_assignments)
-        
-        # Validate new users
-        is_valid, invalid_users = validate_users_exist(new_users)
-        if not is_valid:
-            st.error(f"❌ Cannot update project: Invalid users {', '.join(invalid_users)}")
-            return False
-        
-        # Calculate changes
-        users_to_add = new_users - old_users
-        users_to_remove = old_users - new_users
-        
-        # Sync changes
-        sync_result = sync_user_project_assignments(
-            project_name, 
-            users_to_add=users_to_add, 
-            users_to_remove=users_to_remove
-        )
-        
-        if sync_result["success"]:
-            # Send notifications for changes
-            send_assignment_notifications(
-                project_name, 
-                new_assignments, 
-                changed_assignments_only=True, 
-                old_assignments=old_assignments
-            )
-            
-            # Update client counts
-            _update_client_counts_after_edit(old_project_data, new_project_data.get("client", ""))
-            
-            # Display results
-            if sync_result["added"] > 0:
-                st.success(f"✅ Project added to {sync_result['added']} new users")
-            if sync_result["removed"] > 0:
-                st.info(f"ℹ️ Project removed from {sync_result['removed']} users")
-            
-            return True
-        else:
-            st.error("❌ Failed to sync user assignment changes")
-            return False
-            
-    except Exception as e:
-        st.error(f"❌ Error updating project: {str(e)}")
-        return False
-
 def handle_realtime_assignment_change(project_name, stage_name, new_assignment_data):
     """
     Handle real-time assignment changes (for UI updates)

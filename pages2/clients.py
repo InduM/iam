@@ -75,28 +75,55 @@ class ClientsFrontend:
         # Delete button with confirmation
         confirm_key = f"confirm_delete_{cid}"
         if not st.session_state.confirm_delete_client.get(confirm_key):
-            if col2.button("🗑 Delete", key=f"delete_{cid}"):
-                st.session_state.confirm_delete_client[confirm_key] = True
-                st.rerun()
+            # Show different button styles based on project count
+            if project_count > 0:
+                # Disabled-style button for clients with projects
+                if col2.button("🚫 Delete", key=f"delete_{cid}", help="Cannot delete - client has associated projects"):
+                    st.session_state.confirm_delete_client[confirm_key] = True
+                    st.rerun()
+            else:
+                # Normal delete button for clients without projects
+                if col2.button("🗑 Delete", key=f"delete_{cid}"):
+                    st.session_state.confirm_delete_client[confirm_key] = True
+                    st.rerun()
         else:
             self._render_delete_confirmation(cid, project_count, confirm_key)
-    
-    def _render_delete_confirmation(self, cid, project_count, confirm_key):
-        """Render delete confirmation dialog"""
-        st.warning("Are you sure?")
-        if project_count > 0:
-            st.error(f"This client has {project_count} associated project(s). Delete or reassign them first.")
         
-        col_yes, col_no = st.columns(2)
-        if col_yes.button("✅ Yes", key=f"yes_{cid}"):
-            if self.backend.delete_client(cid):
-                st.success("Client deleted.")
-                st.session_state.confirm_delete_client[confirm_key] = False
-                st.rerun()
-        if col_no.button("❌ No", key=f"no_{cid}"):
+    def _render_cancel_action(self, cid, confirm_key):
+        """Render cancel action for clients with projects"""
+        if st.button("❌ Cancel", key=f"cancel_{cid}"):
             st.session_state.confirm_delete_client[confirm_key] = False
             st.rerun()
-    
+
+    def _render_confirmation_actions(self, cid, confirm_key):
+        """Render confirmation actions for clients without projects"""
+        col_yes, col_no = st.columns(2)
+        if col_yes.button("✅ Yes, Delete", key=f"yes_{cid}"):
+            if self.backend.delete_client(cid):
+                st.success("Client deleted successfully!")
+                st.session_state.confirm_delete_client[confirm_key] = False
+                st.rerun()
+            else:
+                st.error("Failed to delete client. Please try again.")
+        
+        if col_no.button("❌ Cancel", key=f"no_{cid}"):
+            st.session_state.confirm_delete_client[confirm_key] = False
+            st.rerun()
+
+
+    def _render_delete_confirmation(self, cid, project_count, confirm_key):
+        """Render delete confirmation dialog"""
+        st.warning("Are you sure you want to delete this client?")
+        
+        if project_count > 0:
+            st.error(f"⚠️ Cannot delete client! This client has {project_count} associated project(s).")
+            st.info("Please delete or reassign all associated projects before deleting this client.")
+            
+            # Only show cancel button when there are projects
+            self._render_cancel_action(cid, confirm_key)
+        else:
+            # Only show Yes/No buttons when there are no projects
+            self._render_confirmation_actions(cid, confirm_key)
     def show_create_form(self):
         """Display the create client form"""
         st.title("➕ Create Client")

@@ -17,7 +17,7 @@ from .projects_display import (
 
 from .project_logic import (
     _handle_create_project,
-    _handle_save_project,
+    handle_save_project,
     handle_level_change,
 )
 
@@ -192,7 +192,6 @@ def show_edit_form():
     # Use fresh project data instead of cached data
     project = ensure_project_defaults(fresh_project)
     
-    original_team = project.get("team", [])
     original_name = project.get("name", "")
     
     # Form fields using fresh project data
@@ -266,7 +265,7 @@ def show_edit_form():
     )
     
     if st.button("💾 Save"):
-        _handle_save_project(pid, project, name, client, description, start, due, original_team, original_name, stage_assignments)
+        handle_save_project(pid, project, name, client, description, start, due, original_name, stage_assignments)
 
 
 def _render_back_button():
