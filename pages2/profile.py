@@ -4,75 +4,332 @@ from utils.utils_login import is_logged_in
 from backend.profile_backend import *
 from backend.projects_backend import get_project_by_name  # Adjust this import as per your structure
 
-def display_project_details():
-    """Display project details on a separate page with back button"""
-    st.title("📁 Project Details")
+import streamlit as st
+import time
+from datetime import datetime
+from contextlib import contextmanager
+from typing import Optional
+
+@contextmanager
+def loading_state(message: str = "Loading...", success_message: Optional[str] = None):
+    """Context manager for showing loading spinners with optional success message"""
+    try:
+        with st.spinner(message):
+            yield
+        if success_message:
+            st.success(success_message)
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
+        raise
+
+def calculate_project_progress(project_data):
+    """Calculate project progress based on current level and total levels"""
+    print("\n\nPROJECT DATA::::",project_data)
+    current_level = project_data.get('level', -1)
+    total_levels = len(project_data.get('levels', []))
     
+    if total_levels == 0:
+        return 0
+    
+    # Level -1 means not started, 0 means first stage, etc.
+    if current_level == -1:
+        return 0
+    elif current_level >= total_levels - 1:
+        return 100
+    else:
+        return int(((current_level + 1) / total_levels) * 100)
+
+def get_project_status(project_data):
+    """Determine project status based on current level and dates"""
+    current_level = project_data.get('level', -1)
+    total_levels = len(project_data.get('levels', []))
+    due_date = project_data.get('dueDate')
+    
+    if current_level == -1:
+        return "Not Started", "⚪"
+    elif current_level >= total_levels - 1:
+        return "Completed", "🔵"
+    else:
+        # Check if overdue
+        if due_date:
+            try:
+                due_date_obj = datetime.strptime(due_date, '%Y-%m-%d')
+                if datetime.now() > due_date_obj:
+                    return "Overdue", "🔴"
+            except ValueError:
+                pass
+        return "In Progress", "🟢"
+
+def format_date(date_str):
+    """Format date string to a more readable format"""
+    if not date_str:
+        return "Not set"
+    
+    try:
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+        return date_obj.strftime('%B %d, %Y')
+    except ValueError:
+        return date_str
+
+def get_current_stage_info(project_data):
+    """Get information about the current stage"""
+    current_level = project_data.get('level', -1)
+    levels = project_data.get('levels', [])
+    
+    if current_level == -1:
+        return "Project not started", "⏳"
+    elif current_level >= len(levels):
+        return "Project completed", "✅"
+    else:
+        current_stage = levels[current_level]
+        return f"Currently in: {current_stage}", "🔄"
+
+def display_project_details():
+    """Display project details with custom data structure support"""
+    st.title("📁 Project Details")
+   
     # Back button at the top
     if st.button("⬅️ Back to Profile", key="back_to_profile"):
         st.session_state.selected_project = None
         st.session_state.show_project_details = False
         st.rerun()
-
+    
     # Check if project was selected
     selected_project = st.session_state.get("selected_project", None)
-
     if not selected_project:
         st.error("No project selected.")
         st.stop()
-
-    # Fetch project details from MongoDB
-    project_data = get_project_by_name(selected_project)
-
+    
+    # Fetch project details with loading state
+    with loading_state("Loading project details..."):
+        project_data = get_project_by_name(selected_project)
+    
     if not project_data:
         st.error("Project details not found.")
         st.stop()
-
-    # Display project details in a nice format
+    
+    # Display project details
     st.markdown("---")
+   
+    # Project header with status and progress
+    col_header, col_status, col_progress = st.columns([2, 1, 1])
     
-    # Project header
-    st.subheader(f"📌 {project_data.get('name', 'Unnamed Project')}")
+    with col_header:
+        st.subheader(f"📌 {project_data.get('name', 'Unnamed Project')}")
+        if project_data.get('client'):
+            st.markdown(f"**Client:** {project_data.get('client')}")
     
+    with col_status:
+        status_text, status_emoji = get_project_status(project_data)
+        st.markdown(f"**Status:** {status_emoji} {status_text}")
+        
+        # Show current stage
+        stage_info, stage_emoji = get_current_stage_info(project_data)
+        st.markdown(f"**{stage_emoji} {stage_info}**")
+    
+    with col_progress:
+        progress = calculate_project_progress(project_data)
+        st.markdown(f"**📊 Progress:** {progress}%")
+        st.progress(progress / 100)
+   
     # Project information in columns
     col1, col2 = st.columns(2)
-    
+   
     with col1:
         st.markdown("**📝 Description:**")
-        st.write(project_data.get('description', 'No description available.'))
-        
-        st.markdown("**👥 Team Members:**")
-        members = project_data.get('members', [])
-        if members:
-            for member in members:
-                st.write(f"• {member}")
+        description = project_data.get('description', 'No description available.')
+        if description.strip():
+            st.write(description)
         else:
-            st.write("No team members listed.")
-    
+            st.write("No description available.")
+        
+        # Template information
+        if project_data.get('template'):
+            st.markdown(f"**📋 Template:** {project_data.get('template')}")
+        
+        # Created by and timestamps
+        if project_data.get('created_by'):
+            st.markdown(f"**👤 Created by:** {project_data.get('created_by')}")
+        
+        if project_data.get('created_at'):
+            try:
+                created_at = datetime.fromisoformat(project_data.get('created_at').replace('Z', '+00:00'))
+                st.markdown(f"**📅 Created:** {created_at.strftime('%B %d, %Y at %I:%M %p')}")
+            except:
+                st.markdown(f"**📅 Created:** {project_data.get('created_at')}")
+   
     with col2:
         st.markdown("**📅 Timeline:**")
-        st.write(f"**Start Date:** {project_data.get('start_date', 'N/A')}")
-        st.write(f"**End Date:** {project_data.get('end_date', 'N/A')}")
+        start_date = format_date(project_data.get('startDate'))
+        due_date = format_date(project_data.get('dueDate'))
         
-        # Additional project details if available
-        if project_data.get('status'):
-            st.write(f"**Status:** {project_data.get('status')}")
+        st.write(f"**Start Date:** {start_date}")
+        st.write(f"**Due Date:** {due_date}")
         
-        if project_data.get('priority'):
-            st.write(f"**Priority:** {project_data.get('priority')}")
-    
-    # Additional sections can be added here
-    if project_data.get('tasks'):
+        # Calculate duration if both dates are available
+        if project_data.get('startDate') and project_data.get('dueDate'):
+            try:
+                start = datetime.strptime(project_data.get('startDate'), '%Y-%m-%d')
+                end = datetime.strptime(project_data.get('dueDate'), '%Y-%m-%d')
+                duration = (end - start).days
+                st.write(f"**Duration:** {duration} days")
+                
+                # Days remaining
+                days_remaining = (end - datetime.now()).days
+                if days_remaining > 0:
+                    st.write(f"**Days Remaining:** {days_remaining}")
+                elif days_remaining == 0:
+                    st.write("**Due Today!** 🔥")
+                else:
+                    st.write(f"**Overdue by:** {abs(days_remaining)} days ⚠️")
+            except ValueError:
+                pass
+        
+        # Last updated
+        if project_data.get('updated_at'):
+            try:
+                updated_at = datetime.fromisoformat(project_data.get('updated_at').replace('Z', '+00:00'))
+                st.markdown(f"**🔄 Last Updated:** {updated_at.strftime('%B %d, %Y at %I:%M %p')}")
+            except:
+                st.markdown(f"**🔄 Last Updated:** {project_data.get('updated_at')}")
+   
+    # Project Stages/Levels section
+    if project_data.get('levels'):
         st.markdown("---")
-        st.markdown("**📋 Tasks:**")
-        tasks = project_data.get('tasks', [])
-        for task in tasks:
-            st.write(f"• {task}")
+        st.markdown("**📋 Project Stages:**")
+        
+        levels = project_data.get('levels', [])
+        current_level = project_data.get('level', -1)
+        stage_assignments = project_data.get('stage_assignments', {})
+        
+        # Display stages in a nice format
+        for i, level_name in enumerate(levels):
+            # Determine stage status
+            if i < current_level:
+                status_icon = "✅"
+                status_color = "green"
+            elif i == current_level:
+                status_icon = "🔄"
+                status_color = "blue"
+            else:
+                status_icon = "⏳"
+                status_color = "gray"
+            
+            # Get stage assignment info
+            stage_info = stage_assignments.get(str(i), {})
+            stage_name = stage_info.get('stage_name', level_name)
+            members = stage_info.get('members', [])
+            deadline = stage_info.get('deadline', '')
+            substages = stage_info.get('substages', [])
+            
+            # Display stage
+            with st.expander(f"{status_icon} Stage {i+1}: {stage_name}", expanded=(i == current_level)):
+                col_stage1, col_stage2 = st.columns(2)
+                
+                with col_stage1:
+                    if members:
+                        st.write(f"**👥 Assigned to:** {', '.join(members)}")
+                    else:
+                        st.write("**👥 Assigned to:** Not assigned")
+                
+                with col_stage2:
+                    if deadline:
+                        formatted_deadline = format_date(deadline)
+                        st.write(f"**📅 Deadline:** {formatted_deadline}")
+                    else:
+                        st.write("**📅 Deadline:** Not set")
+                
+                # Show substages if any
+                if substages:
+                    st.write("**📝 Substages:**")
+                    for substage in substages:
+                        st.write(f"  • {substage}")
+                
+                # Show stage-specific timestamps if available
+                timestamps = project_data.get('timestamps', {})
+                if str(i) in timestamps:
+                    stage_timestamp = timestamps[str(i)]
+                    st.write(f"**⏰ Completed:** {stage_timestamp}")
     
-    if project_data.get('notes'):
+    # Team Members Summary
+    if project_data.get('stage_assignments'):
         st.markdown("---")
-        st.markdown("**📝 Notes:**")
-        st.write(project_data.get('notes'))
+        st.markdown("**👥 Team Members:**")
+        
+        # Collect all unique members
+        all_members = set()
+        member_stages = {}
+        
+        for stage_idx, stage_info in project_data.get('stage_assignments', {}).items():
+            members = stage_info.get('members', [])
+            for member in members:
+                all_members.add(member)
+                if member not in member_stages:
+                    member_stages[member] = []
+                member_stages[member].append(stage_info.get('stage_name', f"Stage {stage_idx}"))
+        
+        # Display members and their assigned stages
+        for member in sorted(all_members):
+            stages = member_stages.get(member, [])
+            st.write(f"👤 **{member}** - Assigned to: {', '.join(stages)}")
+    
+    # Action buttons with loading states
+    st.markdown("---")
+    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
+    
+    with col_btn1:
+        if st.button("✏️ Edit Project", key="edit_project"):
+            with loading_state("Preparing edit interface..."):
+                st.session_state.edit_project = selected_project
+                st.rerun()
+    
+    with col_btn2:
+        if st.button("📊 View Analytics", key="view_analytics"):
+            with loading_state("Loading analytics..."):
+                st.session_state.show_project_analytics = selected_project
+                st.rerun()
+    
+    with col_btn3:
+        if st.button("⏭️ Advance Stage", key="advance_stage"):
+            current_level = project_data.get('level', -1)
+            total_levels = len(project_data.get('levels', []))
+            
+            if current_level < total_levels - 1:
+                with loading_state("Advancing to next stage..."):
+                    # Add your stage advancement logic here
+                    # update_project_stage(selected_project, current_level + 1)
+                    st.success(f"Advanced to stage: {project_data.get('levels')[current_level + 1]}")
+                    time.sleep(1)
+                    st.rerun()
+            else:
+                st.info("Project is already at the final stage!")
+    
+    with col_btn4:
+        if st.button("🗑️ Delete Project", key="delete_project", type="secondary"):
+            st.session_state.confirm_delete = selected_project
+            st.rerun()
+    
+    # Confirmation dialog for delete
+    if st.session_state.get('confirm_delete') == selected_project:
+        st.warning("Are you sure you want to delete this project? This action cannot be undone.")
+        col_confirm, col_cancel = st.columns(2)
+        
+        with col_confirm:
+            if st.button("Yes, Delete", key="confirm_delete_yes", type="primary"):
+                with loading_state("Deleting project..."):
+                    # Add your delete logic here
+                    # delete_project(selected_project)
+                    time.sleep(1)  # Simulate deletion
+                    st.success("Project deleted successfully!")
+                    st.session_state.confirm_delete = None
+                    st.session_state.selected_project = None
+                    st.session_state.show_project_details = False
+                    st.rerun()
+        
+        with col_cancel:
+            if st.button("Cancel", key="confirm_delete_no"):
+                st.session_state.confirm_delete = None
+                st.rerun()
 
 def edit_profile(profile):
     st.subheader("✏️ Edit Profile")

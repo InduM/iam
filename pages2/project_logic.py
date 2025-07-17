@@ -156,6 +156,7 @@ def handle_save_project(pid, project, name, client, description, start, due, ori
             # Handle stage assignment changes with comprehensive user sync
             if stage_assignments != old_stage_assignments:
                 success_messages.append("Stage assignments updated!")
+                print("Stage assignments updated.")
                 send_assignment_notifications(name,stage_assignments, old_assignments=old_stage_assignments)
                 
                 # ENHANCED: Comprehensive user-project sync
