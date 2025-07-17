@@ -9,6 +9,8 @@ import time
 from datetime import datetime
 from contextlib import contextmanager
 from typing import Optional
+import json
+from bson import ObjectId
 
 @contextmanager
 def loading_state(message: str = "Loading...", success_message: Optional[str] = None):
@@ -24,7 +26,6 @@ def loading_state(message: str = "Loading...", success_message: Optional[str] = 
 
 def calculate_project_progress(project_data):
     """Calculate project progress based on current level and total levels"""
-    print("\n\nPROJECT DATA::::",project_data)
     current_level = project_data.get('level', -1)
     total_levels = len(project_data.get('levels', []))
     
@@ -84,6 +85,91 @@ def get_current_stage_info(project_data):
         current_stage = levels[current_level]
         return f"Currently in: {current_stage}", "🔄"
 
+def get_substage_completion_status(project_data, stage_idx, substage_idx):
+    """Check if a substage is completed"""
+    completion_data = project_data.get('substage_completion', {})
+    stage_completion = completion_data.get(str(stage_idx), {})
+    return stage_completion.get(str(substage_idx), False)
+
+def get_substage_timestamp(project_data, stage_idx, substage_idx):
+    """Get the completion timestamp for a substage"""
+    timestamp_data = project_data.get('substage_timestamps', {})
+    stage_timestamps = timestamp_data.get(str(stage_idx), {})
+    return stage_timestamps.get(str(substage_idx), None)
+
+
+def update_project_stage(project_name, new_stage):
+    """
+    Update project stage in database
+    Replace this with your actual database update logic
+    """
+    # Example MongoDB update (uncomment and modify for your setup):
+    # from pymongo import MongoClient
+    # client = MongoClient('your_mongodb_connection_string')
+    # db = client['your_database_name']
+    # collection = db['your_collection_name']
+    # 
+    # current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # result = collection.update_one(
+    #     {'name': project_name},
+    #     {
+    #         '$set': {
+    #             'level': new_stage,
+    #             'updated_at': datetime.now().isoformat(),
+    #             f'timestamps.{new_stage}': current_time
+    #         }
+    #     }
+    # )
+    # return result.modified_count > 0
+    
+    # For demo purposes
+    return True
+
+def delete_project(project_name):
+    """
+    Delete project from database
+    Replace this with your actual database delete logic
+    """
+    # Example MongoDB delete (uncomment and modify for your setup):
+    # from pymongo import MongoClient
+    # client = MongoClient('your_mongodb_connection_string')
+    # db = client['your_database_name']
+    # collection = db['your_collection_name']
+    # 
+    # result = collection.delete_one({'name': project_name})
+    # return result.deleted_count > 0
+    
+    # For demo purposes
+    return True
+
+def update_substage_completion(project_name, stage_idx, substage_idx, completed=True):
+    """
+    Update substage completion status in database
+    """
+    # Example MongoDB update (uncomment and modify for your setup):
+    # from pymongo import MongoClient
+    # client = MongoClient('your_mongodb_connection_string')
+    # db = client['your_database_name']
+    # collection = db['your_collection_name']
+    # 
+    # current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # update_data = {
+    #     f'substage_completion.{stage_idx}.{substage_idx}': completed,
+    #     'updated_at': datetime.now().isoformat()
+    # }
+    # 
+    # if completed:
+    #     update_data[f'substage_timestamps.{stage_idx}.{substage_idx}'] = current_time
+    # 
+    # result = collection.update_one(
+    #     {'name': project_name},
+    #     {'$set': update_data}
+    # )
+    # return result.modified_count > 0
+    
+    # For demo purposes
+    return True
+
 def display_project_details():
     """Display project details with custom data structure support"""
     st.title("📁 Project Details")
@@ -103,6 +189,7 @@ def display_project_details():
     # Fetch project details with loading state
     with loading_state("Loading project details..."):
         project_data = get_project_by_name(selected_project)
+    
     
     if not project_data:
         st.error("Project details not found.")
@@ -193,17 +280,72 @@ def display_project_details():
             except:
                 st.markdown(f"**🔄 Last Updated:** {project_data.get('updated_at')}")
    
-    # Project Stages/Levels section
+    # Project Stages/Levels section with detailed substages
     if project_data.get('levels'):
         st.markdown("---")
         st.markdown("**📋 Project Stages:**")
+        
+        # Add stage filter options
+        col_filter1, col_filter2 = st.columns(2)
+        with col_filter1:
+            stage_filter = st.selectbox(
+                "Filter by Stage Status:",
+                ["All Stages", "Completed", "Current", "Upcoming"],
+                key="stage_filter"
+            )
+        
+        with col_filter2:
+            search_term = st.text_input(
+                "Search in stages/substages:",
+                placeholder="Search by name or description...",
+                key="stage_search"
+            )
         
         levels = project_data.get('levels', [])
         current_level = project_data.get('level', -1)
         stage_assignments = project_data.get('stage_assignments', {})
         
-        # Display stages in a nice format
+        # Filter stages based on selection
+        stages_to_display = []
         for i, level_name in enumerate(levels):
+            should_display = False
+            
+            # Apply status filter
+            if stage_filter == "All Stages":
+                should_display = True
+            elif stage_filter == "Completed" and i < current_level:
+                should_display = True
+            elif stage_filter == "Current" and i == current_level:
+                should_display = True
+            elif stage_filter == "Upcoming" and i > current_level:
+                should_display = True
+            
+            # Apply search filter
+            if should_display and search_term:
+                stage_info = stage_assignments.get(str(i), {})
+                stage_name = stage_info.get('stage_name', level_name)
+                substages = stage_info.get('substages', [])
+                
+                search_lower = search_term.lower()
+                stage_matches = search_lower in stage_name.lower()
+                substage_matches = any(
+                    search_lower in substage.get('name', '').lower() or 
+                    search_lower in substage.get('description', '').lower()
+                    for substage in substages
+                )
+                
+                should_display = stage_matches or substage_matches
+            
+            if should_display:
+                stages_to_display.append(i)
+        
+        # Display filtered stages
+        if not stages_to_display:
+            st.info("No stages match the current filter criteria.")
+        else:
+            # Display stages in a nice format
+            for i in stages_to_display:
+                level_name = levels[i]
             # Determine stage status
             if i < current_level:
                 status_icon = "✅"
@@ -222,6 +364,9 @@ def display_project_details():
             deadline = stage_info.get('deadline', '')
             substages = stage_info.get('substages', [])
             
+            # Get stage completion timestamp
+            stage_timestamp = project_data.get('timestamps', {}).get(str(i), None)
+            
             # Display stage
             with st.expander(f"{status_icon} Stage {i+1}: {stage_name}", expanded=(i == current_level)):
                 col_stage1, col_stage2 = st.columns(2)
@@ -239,17 +384,88 @@ def display_project_details():
                     else:
                         st.write("**📅 Deadline:** Not set")
                 
-                # Show substages if any
+                # Show stage completion timestamp
+                if stage_timestamp:
+                    st.write(f"**⏰ Stage Completed:** {stage_timestamp}")
+                
+                # Show substage progress if substages exist
+                if substages:
+                    completed_count = sum(1 for k in range(len(substages)) 
+                                        if get_substage_completion_status(project_data, i, k))
+                    total_count = len(substages)
+                    substage_progress = (completed_count / total_count) * 100 if total_count > 0 else 0
+                    
+                    st.write(f"**📊 Substage Progress:** {completed_count}/{total_count} ({substage_progress:.0f}%)")
+                    st.progress(substage_progress / 100)
+                
+                # Show substages with detailed information
                 if substages:
                     st.write("**📝 Substages:**")
-                    for substage in substages:
-                        st.write(f"  • {substage}")
-                
-                # Show stage-specific timestamps if available
-                timestamps = project_data.get('timestamps', {})
-                if str(i) in timestamps:
-                    stage_timestamp = timestamps[str(i)]
-                    st.write(f"**⏰ Completed:** {stage_timestamp}")
+                    for j, substage in enumerate(substages):
+                        # Check if substage is completed
+                        is_completed = get_substage_completion_status(project_data, i, j)
+                        completion_timestamp = get_substage_timestamp(project_data, i, j)
+                        
+                        # Substage status icon
+                        substage_icon = "✅" if is_completed else "⏳"
+                        
+                        # Priority color coding
+                        priority = substage.get('priority', 'Medium')
+                        if priority == 'High':
+                            priority_color = "🔴"
+                        elif priority == 'Medium':
+                            priority_color = "🟡"
+                        else:
+                            priority_color = "🟢"
+                        
+                        st.markdown(f"  {substage_icon} **{substage.get('name', 'Unnamed Substage')}**")
+                        st.markdown(f"    📝 {substage.get('description', 'No description')}")
+                        
+                        # Substage details in columns
+                        col_sub1, col_sub2 = st.columns(2)
+                        with col_sub1:
+                            assignees = substage.get('assignees', [])
+                            if assignees:
+                                st.markdown(f"    👤 **Assignees:** {', '.join(assignees)}")
+                            
+                            substage_deadline = substage.get('deadline', '')
+                            if substage_deadline:
+                                formatted_sub_deadline = format_date(substage_deadline)
+                                st.markdown(f"    📅 **Deadline:** {formatted_sub_deadline}")
+                        
+                        with col_sub2:
+                            st.markdown(f"    {priority_color} **Priority:** {priority}")
+                            
+                            start_date = substage.get('start_date', '')
+                            if start_date:
+                                formatted_start = format_date(start_date)
+                                st.markdown(f"    📅 **Start:** {formatted_start}")
+                        
+                        # Show completion timestamp if available
+                        if completion_timestamp:
+                            st.markdown(f"    ✅ **Completed:** {completion_timestamp}")
+                        
+                        # Add substage completion toggle for current stage
+                        if i == current_level:
+                            col_toggle, col_space = st.columns([1, 3])
+                            with col_toggle:
+                                if st.button(
+                                    "✅ Complete" if not is_completed else "↩️ Undo",
+                                    key=f"toggle_substage_{i}_{j}",
+                                    type="secondary"
+                                ):
+                                    with loading_state(f"Updating substage status..."):
+                                        success = update_substage_completion(
+                                            selected_project, i, j, not is_completed
+                                        )
+                                        if success:
+                                            st.success("Substage updated successfully!")
+                                            time.sleep(1)
+                                            st.rerun()
+                                        else:
+                                            st.error("Failed to update substage!")
+                        
+                        st.markdown("---")
     
     # Team Members Summary
     if project_data.get('stage_assignments'):
@@ -262,20 +478,73 @@ def display_project_details():
         
         for stage_idx, stage_info in project_data.get('stage_assignments', {}).items():
             members = stage_info.get('members', [])
+            substages = stage_info.get('substages', [])
+            
+            # Add stage members
             for member in members:
                 all_members.add(member)
                 if member not in member_stages:
                     member_stages[member] = []
                 member_stages[member].append(stage_info.get('stage_name', f"Stage {stage_idx}"))
+            
+            # Add substage assignees
+            for substage in substages:
+                assignees = substage.get('assignees', [])
+                for assignee in assignees:
+                    all_members.add(assignee)
+                    if assignee not in member_stages:
+                        member_stages[assignee] = []
+                    if stage_info.get('stage_name') not in member_stages[assignee]:
+                        member_stages[assignee].append(stage_info.get('stage_name', f"Stage {stage_idx}"))
         
         # Display members and their assigned stages
         for member in sorted(all_members):
             stages = member_stages.get(member, [])
             st.write(f"👤 **{member}** - Assigned to: {', '.join(stages)}")
     
+    # Project Statistics
+    st.markdown("---")
+    st.markdown("**📊 Project Statistics:**")
+    
+    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+    
+    with col_stat1:
+        total_stages = len(project_data.get('levels', []))
+        st.metric("Total Stages", total_stages)
+    
+    with col_stat2:
+        current_stage = project_data.get('level', -1) + 1
+        st.metric("Current Stage", f"{current_stage}/{total_stages}")
+    
+    with col_stat3:
+        # Count total substages
+        total_substages = 0
+        completed_substages = 0
+        
+        for stage_idx, stage_info in project_data.get('stage_assignments', {}).items():
+            substages = stage_info.get('substages', [])
+            total_substages += len(substages)
+            
+            completion_data = project_data.get('substage_completion', {}).get(stage_idx, {})
+            completed_substages += sum(1 for completed in completion_data.values() if completed)
+        
+        st.metric("Substages Completed", f"{completed_substages}/{total_substages}")
+    
+    with col_stat4:
+        # Calculate days since start
+        if project_data.get('startDate'):
+            try:
+                start_date = datetime.strptime(project_data.get('startDate'), '%Y-%m-%d')
+                days_elapsed = (datetime.now() - start_date).days
+                st.metric("Days Elapsed", days_elapsed)
+            except ValueError:
+                st.metric("Days Elapsed", "N/A")
+        else:
+            st.metric("Days Elapsed", "N/A")
+    
     # Action buttons with loading states
     st.markdown("---")
-    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
+    col_btn1, col_btn2, col_btn3, col_btn4, col_btn5 = st.columns(5)
     
     with col_btn1:
         if st.button("✏️ Edit Project", key="edit_project"):
@@ -296,15 +565,69 @@ def display_project_details():
             
             if current_level < total_levels - 1:
                 with loading_state("Advancing to next stage..."):
-                    # Add your stage advancement logic here
-                    # update_project_stage(selected_project, current_level + 1)
-                    st.success(f"Advanced to stage: {project_data.get('levels')[current_level + 1]}")
-                    time.sleep(1)
-                    st.rerun()
+                    success = update_project_stage(selected_project, current_level + 1)
+                    if success:
+                        st.success(f"Advanced to stage: {project_data.get('levels')[current_level + 1]}")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Failed to advance stage!")
             else:
                 st.info("Project is already at the final stage!")
     
     with col_btn4:
+        if st.button("📥 Export Data", key="export_project"):
+            with loading_state("Preparing export..."):
+                # Create exportable data
+                export_data = {
+                    'project_name': project_data.get('name'),
+                    'client': project_data.get('client'),
+                    'description': project_data.get('description'),
+                    'start_date': project_data.get('startDate'),
+                    'due_date': project_data.get('dueDate'),
+                    'current_stage': project_data.get('level'),
+                    'progress_percentage': progress,
+                    'stages': [],
+                    'team_members': list(all_members),
+                    'export_timestamp': datetime.now().isoformat()
+                }
+                
+                # Add stage details
+                for i, level_name in enumerate(levels):
+                    stage_info = stage_assignments.get(str(i), {})
+                    stage_export = {
+                        'stage_number': i + 1,
+                        'stage_name': stage_info.get('stage_name', level_name),
+                        'members': stage_info.get('members', []),
+                        'deadline': stage_info.get('deadline', ''),
+                        'completed': i < current_level,
+                        'substages': []
+                    }
+                    
+                    for j, substage in enumerate(stage_info.get('substages', [])):
+                        substage_export = {
+                            'name': substage.get('name'),
+                            'description': substage.get('description'),
+                            'assignees': substage.get('assignees', []),
+                            'deadline': substage.get('deadline'),
+                            'priority': substage.get('priority'),
+                            'completed': get_substage_completion_status(project_data, i, j),
+                            'completion_timestamp': get_substage_timestamp(project_data, i, j)
+                        }
+                        stage_export['substages'].append(substage_export)
+                    
+                    export_data['stages'].append(stage_export)
+                
+                # Convert to JSON for download
+                json_data = json.dumps(export_data, indent=2)
+                st.download_button(
+                    label="💾 Download JSON",
+                    data=json_data,
+                    file_name=f"{project_data.get('name', 'project')}_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json"
+                )
+    
+    with col_btn5:
         if st.button("🗑️ Delete Project", key="delete_project", type="secondary"):
             st.session_state.confirm_delete = selected_project
             st.rerun()
