@@ -1,16 +1,14 @@
 import streamlit as st
-from utils.utils_profile import decode_base64_image
+import time
+from datetime import datetime
 from utils.utils_login import is_logged_in
 from backend.profile_backend import *
 from backend.projects_backend import get_project_by_name  # Adjust this import as per your structure
-
-import streamlit as st
-import time
-from datetime import datetime
 from contextlib import contextmanager
 from typing import Optional
-import json
-from bson import ObjectId
+from utils.utils_profile import (decode_base64_image,calculate_project_progress,
+                                 get_project_status,format_date,get_current_stage_info,
+                                 get_substage_completion_status,get_substage_timestamp)
 
 @contextmanager
 def loading_state(message: str = "Loading...", success_message: Optional[str] = None):
@@ -24,78 +22,6 @@ def loading_state(message: str = "Loading...", success_message: Optional[str] = 
         st.error(f"Error: {str(e)}")
         raise
 
-def calculate_project_progress(project_data):
-    """Calculate project progress based on current level and total levels"""
-    current_level = project_data.get('level', -1)
-    total_levels = len(project_data.get('levels', []))
-    
-    if total_levels == 0:
-        return 0
-    
-    # Level -1 means not started, 0 means first stage, etc.
-    if current_level == -1:
-        return 0
-    elif current_level >= total_levels - 1:
-        return 100
-    else:
-        return int(((current_level + 1) / total_levels) * 100)
-
-def get_project_status(project_data):
-    """Determine project status based on current level and dates"""
-    current_level = project_data.get('level', -1)
-    total_levels = len(project_data.get('levels', []))
-    due_date = project_data.get('dueDate')
-    
-    if current_level == -1:
-        return "Not Started", "⚪"
-    elif current_level >= total_levels - 1:
-        return "Completed", "🔵"
-    else:
-        # Check if overdue
-        if due_date:
-            try:
-                due_date_obj = datetime.strptime(due_date, '%Y-%m-%d')
-                if datetime.now() > due_date_obj:
-                    return "Overdue", "🔴"
-            except ValueError:
-                pass
-        return "In Progress", "🟢"
-
-def format_date(date_str):
-    """Format date string to a more readable format"""
-    if not date_str:
-        return "Not set"
-    
-    try:
-        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-        return date_obj.strftime('%B %d, %Y')
-    except ValueError:
-        return date_str
-
-def get_current_stage_info(project_data):
-    """Get information about the current stage"""
-    current_level = project_data.get('level', -1)
-    levels = project_data.get('levels', [])
-    
-    if current_level == -1:
-        return "Project not started", "⏳"
-    elif current_level >= len(levels):
-        return "Project completed", "✅"
-    else:
-        current_stage = levels[current_level]
-        return f"Currently in: {current_stage}", "🔄"
-
-def get_substage_completion_status(project_data, stage_idx, substage_idx):
-    """Check if a substage is completed"""
-    completion_data = project_data.get('substage_completion', {})
-    stage_completion = completion_data.get(str(stage_idx), {})
-    return stage_completion.get(str(substage_idx), False)
-
-def get_substage_timestamp(project_data, stage_idx, substage_idx):
-    """Get the completion timestamp for a substage"""
-    timestamp_data = project_data.get('substage_timestamps', {})
-    stage_timestamps = timestamp_data.get(str(stage_idx), {})
-    return stage_timestamps.get(str(substage_idx), None)
 
 
 def update_project_stage(project_name, new_stage):
@@ -125,22 +51,6 @@ def update_project_stage(project_name, new_stage):
     # For demo purposes
     return True
 
-def delete_project(project_name):
-    """
-    Delete project from database
-    Replace this with your actual database delete logic
-    """
-    # Example MongoDB delete (uncomment and modify for your setup):
-    # from pymongo import MongoClient
-    # client = MongoClient('your_mongodb_connection_string')
-    # db = client['your_database_name']
-    # collection = db['your_collection_name']
-    # 
-    # result = collection.delete_one({'name': project_name})
-    # return result.deleted_count > 0
-    
-    # For demo purposes
-    return True
 
 def update_substage_completion(project_name, stage_idx, substage_idx, completed=True):
     """
@@ -544,7 +454,7 @@ def display_project_details():
     
     # Action buttons with loading states
     st.markdown("---")
-    col_btn1, col_btn2, col_btn3, col_btn4, col_btn5 = st.columns(5)
+    col_btn1, col_btn2, col_btn3 = st.columns(3)
     
     with col_btn1:
         if st.button("✏️ Edit Project", key="edit_project"):
@@ -574,85 +484,6 @@ def display_project_details():
                         st.error("Failed to advance stage!")
             else:
                 st.info("Project is already at the final stage!")
-    
-    with col_btn4:
-        if st.button("📥 Export Data", key="export_project"):
-            with loading_state("Preparing export..."):
-                # Create exportable data
-                export_data = {
-                    'project_name': project_data.get('name'),
-                    'client': project_data.get('client'),
-                    'description': project_data.get('description'),
-                    'start_date': project_data.get('startDate'),
-                    'due_date': project_data.get('dueDate'),
-                    'current_stage': project_data.get('level'),
-                    'progress_percentage': progress,
-                    'stages': [],
-                    'team_members': list(all_members),
-                    'export_timestamp': datetime.now().isoformat()
-                }
-                
-                # Add stage details
-                for i, level_name in enumerate(levels):
-                    stage_info = stage_assignments.get(str(i), {})
-                    stage_export = {
-                        'stage_number': i + 1,
-                        'stage_name': stage_info.get('stage_name', level_name),
-                        'members': stage_info.get('members', []),
-                        'deadline': stage_info.get('deadline', ''),
-                        'completed': i < current_level,
-                        'substages': []
-                    }
-                    
-                    for j, substage in enumerate(stage_info.get('substages', [])):
-                        substage_export = {
-                            'name': substage.get('name'),
-                            'description': substage.get('description'),
-                            'assignees': substage.get('assignees', []),
-                            'deadline': substage.get('deadline'),
-                            'priority': substage.get('priority'),
-                            'completed': get_substage_completion_status(project_data, i, j),
-                            'completion_timestamp': get_substage_timestamp(project_data, i, j)
-                        }
-                        stage_export['substages'].append(substage_export)
-                    
-                    export_data['stages'].append(stage_export)
-                
-                # Convert to JSON for download
-                json_data = json.dumps(export_data, indent=2)
-                st.download_button(
-                    label="💾 Download JSON",
-                    data=json_data,
-                    file_name=f"{project_data.get('name', 'project')}_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json"
-                )
-    
-    with col_btn5:
-        if st.button("🗑️ Delete Project", key="delete_project", type="secondary"):
-            st.session_state.confirm_delete = selected_project
-            st.rerun()
-    
-    # Confirmation dialog for delete
-    if st.session_state.get('confirm_delete') == selected_project:
-        st.warning("Are you sure you want to delete this project? This action cannot be undone.")
-        col_confirm, col_cancel = st.columns(2)
-        
-        with col_confirm:
-            if st.button("Yes, Delete", key="confirm_delete_yes", type="primary"):
-                with loading_state("Deleting project..."):
-                    # Add your delete logic here
-                    # delete_project(selected_project)
-                    time.sleep(1)  # Simulate deletion
-                    st.success("Project deleted successfully!")
-                    st.session_state.confirm_delete = None
-                    st.session_state.selected_project = None
-                    st.session_state.show_project_details = False
-                    st.rerun()
-        
-        with col_cancel:
-            if st.button("Cancel", key="confirm_delete_no"):
-                st.session_state.confirm_delete = None
-                st.rerun()
 
 def edit_profile(profile):
     st.subheader("✏️ Edit Profile")
