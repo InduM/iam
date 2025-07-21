@@ -108,6 +108,7 @@ def render_substage_assignments_editor(levels: List[str], team_members: List[str
                             )
                         
                         with substage_col2:
+                            new_substage_startdate = st.date_input("Substage Start Date", value=None)
                             new_substage_deadline = st.date_input("Substage Deadline", value=None)
                             new_substage_priority = st.selectbox(
                                 "Priority",
@@ -134,6 +135,7 @@ def render_substage_assignments_editor(levels: List[str], team_members: List[str
                                     "description": new_substage_desc.strip(),
                                     "assignees": new_substage_assignees,
                                     "deadline": new_substage_deadline.isoformat() if new_substage_deadline else "",
+                                    "start_date":new_substage_startdate.isoformat() if new_substage_startdate else "",
                                     "priority": new_substage_priority,
                                     "completed": False,
                                     "created_at": datetime.now().isoformat(),
@@ -200,12 +202,24 @@ def render_substage_assignments_editor(levels: List[str], team_members: List[str
                         with edit_col2:
                             # Deadline and priority
                             current_substage_deadline = None
+                            current_substage_startdate = None
                             if substage.get("deadline"):
                                 try:
                                     current_substage_deadline = date.fromisoformat(substage["deadline"])
                                 except:
                                     pass
+                            if substage.get("start_date"):
+                                try:
+                                    current_substage_startdate = date.fromisoformat(substage["start_date"])
+                                except:
+                                    pass
                             
+                            updated_startdate = st.date_input(
+                                "Start Date",
+                                value=current_substage_startdate,
+                                key=f"edit_startdate_{substage_key}"
+                            )
+
                             updated_deadline = st.date_input(
                                 "Deadline",
                                 value=current_substage_deadline,
@@ -237,6 +251,7 @@ def render_substage_assignments_editor(levels: List[str], team_members: List[str
                                     "description": updated_desc,
                                     "assignees": updated_assignees,
                                     "deadline": updated_deadline.isoformat() if updated_deadline else "",
+                                    "start_date": updated_startdate.isoformat() if updated_startdate else "",
                                     "priority": updated_priority,
                                     "completed": is_completed,
                                     "completed_at": datetime.now().isoformat() if is_completed and not substage.get("completed") else substage.get("completed_at"),
