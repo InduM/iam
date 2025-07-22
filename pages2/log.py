@@ -1,192 +1,488 @@
 import streamlit as st
-from utils.utils_login import is_logged_in
+import pandas as pd
 from datetime import datetime
-from backend.log_backend import LogBackend
-from utils.utils_log import (
-    create_default_log, get_date_constraints, can_add_log_for_date,
-    initialize_session_state, ensure_log_fields, get_log_columns,
-    get_category_options, get_priority_options, get_status_options,
-    format_log_summary, display_spoc_info
-)
+from backend.log_backend import ProjectLogManager
+from utils.utils_log import format_status_badge, format_priority_badge
 
 
-def render_date_controls(backend, username):
-    """Render date picker and control buttons"""
-    date_constraints = get_date_constraints()
-    default_date = date_constraints["today"]
-    
-    col1, col2, col3 = st.columns([5, 1, 2])
-    
-    with col1:
-        selected_date = st.date_input(
-            "Select Date", 
-            value=default_date, 
-            key="selected_date", 
-            label_visibility="collapsed"
-        )
-        can_add = can_add_log_for_date(selected_date)
-
-    with col2:
-        st.button(
-            "➕ Log", 
-            on_click=lambda: st.session_state.logs.append(create_default_log()), 
-            disabled=not can_add
-        )
-
-    with col3:
-        def refresh_logs():
-            with st.spinner("Refreshing logs..."):
-                selected_date_str = selected_date.strftime("%Y-%m-%d")
-                fetched_logs = backend.fetch_logs(selected_date_str, username)
-                st.session_state.logs = []
-                
-                for log in fetched_logs:
-                    st.session_state.logs.append(ensure_log_fields(log))
-                
-                if not st.session_state.logs:
-                    st.session_state.logs.append(create_default_log())
-                
-                st.session_state.last_selected_date = selected_date
-                st.session_state.refresh_triggered = False
-
-        if st.button("🔄 Refresh") and not st.session_state.refresh_triggered:
-            st.session_state.refresh_triggered = True
-            refresh_logs()
-
-    return selected_date
-
-
-def render_input_field(col_widget, field, log, widget_key, user_projects, client_names, client_dict):
-    """Render individual input field based on field type"""
-    if field == "Time":
-        log_time = datetime.strptime(log[field], "%H:%M").time() if isinstance(log[field], str) else log.get(field, datetime.now().time())
-        new_time = col_widget.time_input("Time", value=log_time, key=widget_key)
-        log[field] = new_time.strftime("%H:%M")
-
-    elif field == "Priority":
-        options = get_priority_options()
-        idx = options.index(log[field]) if log[field] in options else 0
-        log[field] = col_widget.selectbox("Priority", options=options, index=idx, key=widget_key)
-
-    elif field == "Category":
-        options = get_category_options()
-        idx = options.index(log[field]) if log[field] in options else 0
-        selected = col_widget.selectbox("Category", options=options, index=idx, key=widget_key)
-        if selected == "Other":
-            custom = col_widget.text_input("Specify Other Category", key=widget_key + "_custom")
-            log[field] = custom
-        else:
-            log[field] = selected
-
-    elif field == "Status":
-        options = get_status_options()
-        idx = options.index(log[field]) if log[field] in options else 0
-        log[field] = col_widget.selectbox("Status", options=options, index=idx, key=widget_key)
-
-    elif field == "Client Name":
-        options = [""] + client_names
-        idx = options.index(log[field]) if log[field] in options else 0
-        selected_client = col_widget.selectbox("Client Name", options=options, index=idx, key=widget_key, on_change=None)
-        log[field] = selected_client
+class ProjectLogFrontend:
+    def __init__(self):
+        """Initialize the frontend with backend connection"""
+        self.log_manager = ProjectLogManager()
         
-        # Display SPOC information
-        display_spoc_info(col_widget, client_dict, selected_client)
-
-    elif field == "Project Name":
-        options = [""] + user_projects
-        idx = options.index(log[field]) if log[field] in options else 0
-        log[field] = col_widget.selectbox("Project Name", options=options, index=idx, key=widget_key)
-
-    else:
-        log[field] = col_widget.text_area(field, value=log[field], key=widget_key)
-
-
-def render_log_table(backend, username, selected_date, user_projects, client_names, client_dict):
-    """Render the main log table with all entries"""
-    log_columns = get_log_columns()
+    def setup_page_config(self):
+        """Setup Streamlit page configuration"""
+        pass
     
-    def delete_log_row(index):
-        log_to_delete = st.session_state.logs[index]
-        selected_date_str = selected_date.strftime("%Y-%m-%d")
-        backend.delete_log(selected_date_str, username, log_to_delete["Time"])
-        del st.session_state.logs[index]
-
-    with st.container():
-        st.markdown('<div class="scroll-container"><div class="block-container">', unsafe_allow_html=True)
         
-        for i, log in enumerate(st.session_state.logs):
-            log["Time"] = datetime.now().strftime("%H:%M")
-            summary = format_log_summary(log)
+    def render_dashboard_tab(self):
+        """Render the Dashboard tab content"""
+        st.header("📊 Dashboard Overview")
+        
+        # Refresh logs button
+        if st.button("🔄 Refresh Logs from Projects", type="primary"):
+            with st.spinner("Extracting assignments from projects..."):
+                logs_created = self.log_manager.extract_and_create_logs()
+                st.success(f"✅ Created {logs_created} log entries from project assignments")
+        
+        # Overview metrics
+        overview = self.log_manager.get_project_overview()
+        if overview:
+            col1, col2, col3, col4, col5 = st.columns(5)
             
-            with st.expander(f"Log Entry {i+1} — {summary}", expanded=True):
-                col_left, col_right = st.columns(2)
-
-                # Split fields between columns
-                for j, (field, _) in enumerate(log_columns):
-                    if field == "Time":
-                        continue  # Hide from UI but keep in DB
+            with col1:
+                st.metric("📁 Total Projects", overview.get("total_projects", 0))
+            with col2:
+                st.metric("📋 Total Tasks", overview.get("total_logs", 0))
+            with col3:
+                st.metric("✅ Completed", overview.get("completed_tasks", 0))
+            with col4:
+                st.metric("🔴 Overdue", overview.get("overdue_tasks", 0))
+            with col5:
+                st.metric("🟡 In Progress", overview.get("in_progress_tasks", 0))
+        
+        # Recent activity
+        self._render_recent_activity()
+        
+    def _render_recent_activity(self):
+        """Render recent activity section"""
+        st.subheader("📈 Recent Activity")
+        recent_logs = list(self.log_manager.logs.find({}).sort("updated_at", -1).limit(10))
+        
+        if recent_logs:
+            for log in recent_logs:
+                with st.expander(f"{log['project_name']} - {log['substage_name']} ({log['assigned_user']})"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Status:** {format_status_badge(log['status'])}")
+                        st.write(f"**Priority:** {format_priority_badge(log.get('priority', 'Medium'))}")
+                        st.write(f"**Client:** {log.get('client', 'N/A')}")
+                    with col2:
+                        st.write(f"**Stage:** {log['stage_name']}")
+                        st.write(f"**Deadline:** {log.get('substage_deadline', log.get('stage_deadline', 'Not Set'))}")
+                        updated_time = log.get('updated_at', log.get('created_at'))
+                        if updated_time:
+                            st.write(f"**Updated:** {updated_time.strftime('%Y-%m-%d %H:%M')}")
+                        else:
+                            st.write("**Updated:** N/A")
+    
+    def render_user_logs_tab(self, is_admin=True):
+        """Render the User Logs tab content"""        
+        # Get current user info
+        current_user = st.session_state.get("username", "Unknown User")
+        user_role = st.session_state.get("role", "user")
+        
+        # Project selection
+        projects = self.log_manager.get_projects()
+        project_options = ["All Projects"] + [p['name'] for p in projects]
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            selected_project = st.selectbox(
+                "Select Project", 
+                project_options,
+                format_func=lambda x: x if x == "All Projects" else f"{x} ({next((p['client'] for p in projects if p['name'] == x), 'N/A')})"
+            )
+        
+        # Get users based on project selection and role
+        if selected_project == "All Projects":
+            if is_admin:
+                users = self.log_manager.get_all_users()
+            else:
+                users = [current_user] if current_user in self.log_manager.get_all_users() else []
+            project_filter = None
+        else:
+            if is_admin:
+                users = self.log_manager.get_project_users(selected_project)
+            else:
+                project_users = self.log_manager.get_project_users(selected_project)
+                users = [current_user] if current_user in project_users else []
+            project_filter = selected_project
+        
+        with col2:
+            if users:
+                if is_admin:
+                    selected_user = st.selectbox("Select User", users)
+                else:
+                    # For non-admin users, automatically select current user
+                    selected_user = current_user
+                    st.selectbox("Select User", [current_user], disabled=True)
+            else:
+                if is_admin:
+                    st.warning(f"⚠️ No users found for {selected_project}")
+                else:
+                    st.warning(f"⚠️ You have no tasks in {selected_project}")
+                selected_user = None
+        
+        if selected_user:
+            self._render_user_tasks(selected_user, project_filter)
+        else:
+            if selected_project != "All Projects":
+                if is_admin:
+                    st.info(f"ℹ️ No users assigned to tasks in {selected_project}")
+                else:
+                    st.info(f"ℹ️ You have no tasks assigned in {selected_project}")
+            else:
+                if is_admin:
+                    st.info("ℹ️ Please select a user to view their tasks")
+                else:
+                    st.info("ℹ️ You have no tasks assigned")
+    
+    def _render_user_tasks(self, selected_user, project_filter):
+        """Render tasks for selected user"""
+        # Get logs for selected user and project
+        if project_filter:
+            user_logs = self.log_manager.get_user_logs_by_project(selected_user, project_filter)
+            st.subheader(f"📋 Tasks for {selected_user} in {project_filter}")
+        else:
+            user_logs = self.log_manager.get_user_logs(selected_user)
+            st.subheader(f"📋 All Tasks for {selected_user}")
+        
+        if user_logs:
+            # Filters
+            filtered_logs = self._render_user_filters(user_logs, project_filter)
+            
+            # Display logs
+            self._render_task_list(filtered_logs)
+            
+            st.info(f"📊 Showing {len(filtered_logs)} of {len(user_logs)} tasks")
+        else:
+            if project_filter:
+                st.info(f"📭 No logs found for {selected_user} in {project_filter}")
+            else:
+                st.info(f"📭 No logs found for {selected_user}")
+    
+    def _render_user_filters(self, user_logs, project_filter):
+        """Render filter controls for user logs"""
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            all_statuses = list(set([log["status"] for log in user_logs]))
+            status_filter = st.multiselect("Filter by Status", all_statuses, default=all_statuses)
+        
+        with col2:
+            all_priorities = list(set([log.get("priority", "Medium") for log in user_logs]))
+            priority_filter = st.multiselect("Filter by Priority", all_priorities, default=all_priorities)
+        
+        with col3:
+            if project_filter is None:
+                all_user_projects = list(set([log["project_name"] for log in user_logs]))
+                user_project_filter = st.multiselect("Filter by Project", all_user_projects, default=all_user_projects)
+            else:
+                user_project_filter = [project_filter]
+        
+        # Apply filters
+        filtered_logs = [
+            log for log in user_logs 
+            if log["status"] in status_filter 
+            and log.get("priority", "Medium") in priority_filter
+            and log["project_name"] in user_project_filter
+        ]
+        
+        return filtered_logs
+    
+    def _render_task_list(self, filtered_logs):
+        """Render the list of tasks"""
+        for log in filtered_logs:
+            with st.expander(f"🏗️ {log['project_name']} - {log['stage_name']} > {log['substage_name']}"):
+                col1, col2, col3 = st.columns([3, 3, 2])
+                
+                with col1:
+                    st.write(f"**Project:** {log['project_name']}")
+                    st.write(f"**Client:** {log.get('client', 'N/A')}")
+                    st.write(f"**Stage:** {log['stage_name']}")
+                    st.write(f"**Substage:** {log['substage_name']}")
+                    st.write(f"**Status:** {format_status_badge(log['status'])}")
+                    st.write(f"**Priority:** {format_priority_badge(log.get('priority', 'Medium'))}")
+                
+                with col2:
+                    st.write(f"**Start Date:** {log['start_date'] or 'Not Set'}")
+                    st.write(f"**Stage Deadline:** {log['stage_deadline'] or 'Not Set'}")
+                    st.write(f"**Substage Deadline:** {log['substage_deadline'] or 'Not Set'}")
+                    if log.get('description'):
+                        desc = log['description']
+                        st.write(f"**Description:** {desc[:100]}{'...' if len(desc) > 100 else ''}")
+                
+                with col3:
+                    if not log.get('is_completed', False):
+                        if st.button(f"✅ Mark Complete", key=f"complete_{log['_id']}"):
+                            if self.log_manager.complete_task(str(log['_id'])):
+                                st.success("✅ Task completed successfully!")
+                                st.rerun()
+                            else:
+                                st.error("❌ Failed to complete task")
+                    else:
+                        st.success("✅ Completed")
+                        if log.get('completed_at'):
+                            st.write(f"**Completed:** {log['completed_at'].strftime('%Y-%m-%d %H:%M')}")
+    
+    def render_project_overview_tab(self):
+        """Render the Project Overview tab content"""        
+        projects = self.log_manager.get_projects()
+        
+        if projects:
+            selected_project = st.selectbox(
+                "Select Project", 
+                options=[p['name'] for p in projects],
+                format_func=lambda x: f"{x} ({next(p['client'] for p in projects if p['name'] == x)})"
+            )
+            
+            # Get logs for selected project
+            project_logs = list(self.log_manager.logs.find({"project_name": selected_project}))
+            
+            if project_logs:
+                self._render_project_statistics(project_logs)
+                self._render_stage_breakdown(project_logs)
+            else:
+                st.info(f"📭 No tasks found for {selected_project}")
+        else:
+            st.warning("⚠️ No projects found")
+    
+    def _render_project_statistics(self, project_logs):
+        """Render project statistics"""
+        col1, col2, col3, col4 = st.columns(4)
+        
+        total_tasks = len(project_logs)
+        completed_tasks = sum(1 for log in project_logs if log.get('is_completed', False))
+        overdue_tasks = sum(1 for log in project_logs if log.get('status') == 'Overdue')
+        in_progress_tasks = sum(1 for log in project_logs if log.get('status') == 'In Progress')
+        
+        with col1:
+            st.metric("📋 Total Tasks", total_tasks)
+        with col2:
+            st.metric("✅ Completed", completed_tasks)
+        with col3:
+            st.metric("🔴 Overdue", overdue_tasks)
+        with col4:
+            st.metric("🟡 In Progress", in_progress_tasks)
+        
+        # Progress bar
+        if total_tasks > 0:
+            progress = completed_tasks / total_tasks
+            st.progress(progress)
+            st.write(f"**Progress: {progress:.1%} ({completed_tasks}/{total_tasks} tasks completed)**")
+    
+    def _render_stage_breakdown(self, project_logs):
+        """Render task breakdown by stage"""
+        st.subheader("📊 Task Breakdown by Stage")
+        stage_data = {}
+        
+        for log in project_logs:
+            stage = log['stage_name']
+            if stage not in stage_data:
+                stage_data[stage] = {'total': 0, 'completed': 0}
+            stage_data[stage]['total'] += 1
+            if log.get('is_completed', False):
+                stage_data[stage]['completed'] += 1
+        
+        for stage, data in stage_data.items():
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                if data['total'] > 0:
+                    progress = data['completed'] / data['total']
+                    st.progress(progress)
+            with col2:
+                st.write(f"**{stage}:** {data['completed']}/{data['total']}")
+    
+    def render_admin_panel_tab(self):
+        """Render the Admin Panel tab content"""
+        
+        tab1, tab2, tab3 = st.tabs(["Database Operations", "Statistics", "Data Export"])
+        
+        with tab1:
+            self._render_database_operations()
+        
+        with tab2:
+            self._render_statistics()
+        
+        with tab3:
+            self._render_data_export()
+    
+    def _render_database_operations(self):
+        """Render database operations section"""
+        st.subheader("🔄 Database Operations")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📥 Extract All Assignments", type="primary"):
+                with st.spinner("Extracting assignments from all projects..."):
+                    logs_created = self.log_manager.extract_and_create_logs()
+                    st.success(f"✅ Created {logs_created} log entries")
+            
+            if st.button("🔄 Update All Statuses"):
+                with st.spinner("Updating all task statuses..."):
+                    logs = list(self.log_manager.logs.find({"is_completed": False}))
+                    updated_count = 0
                     
-                    target_col = col_left if j % 2 == 0 else col_right
-                    render_input_field(
-                        target_col, field, log, f"{field}_{i}", 
-                        user_projects, client_names, client_dict
+                    for log in logs:
+                        current_status = self.log_manager.calculate_status(
+                            log["start_date"],
+                            log["stage_deadline"],
+                            log.get("substage_deadline", ""),
+                            log.get("is_completed", False)
+                        )
+                        if current_status != log["status"]:
+                            self.log_manager.logs.update_one(
+                                {"_id": log["_id"]},
+                                {"$set": {"status": current_status, "updated_at": datetime.now()}}
+                            )
+                            updated_count += 1
+                    
+                    st.success(f"✅ Updated {updated_count} task statuses")
+        
+        with col2:
+            self._render_delete_operations()
+    
+    def _render_delete_operations(self):
+        """Render delete operations with confirmation"""
+        # Show current log count
+        current_count = self.log_manager.logs.count_documents({})
+        st.info(f"📊 Current logs in database: {current_count}")
+        
+        # Delete confirmation logic
+        if st.button("🗑️ Clear All Logs", type="secondary"):
+            st.session_state.confirm_delete = True
+        
+        if st.session_state.get('confirm_delete', False):
+            st.warning("⚠️ **WARNING:** This will permanently delete ALL log entries!")
+            
+            col_confirm1, col_confirm2 = st.columns(2)
+            
+            with col_confirm1:
+                if st.button("✅ Yes, Delete All", type="primary", key="confirm_delete_yes"):
+                    try:
+                        # Check database connection
+                        self.log_manager.client.admin.command('ping')
+                        
+                        # Count and delete
+                        count_before = self.log_manager.logs.count_documents({})
+                        st.info(f"📊 Found {count_before} documents to delete")
+                        
+                        result = self.log_manager.logs.delete_many({})
+                        count_after = self.log_manager.logs.count_documents({})
+                        
+                        if result.deleted_count > 0:
+                            st.success(f"🗑️ Successfully deleted {result.deleted_count} log entries")
+                            st.info(f"📊 Remaining logs: {count_after}")
+                        elif count_before == 0:
+                            st.info("📭 No logs found to delete")
+                        else:
+                            st.error(f"❌ Deletion may have failed. Documents before: {count_before}, after: {count_after}")
+                        
+                        st.session_state.confirm_delete = False
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error during deletion: {str(e)}")
+            
+            with col_confirm2:
+                if st.button("❌ Cancel", key="confirm_delete_no"):
+                    st.session_state.confirm_delete = False
+                    st.rerun()
+    
+    def _render_statistics(self):
+        """Render detailed statistics"""
+        st.subheader("📊 Detailed Statistics")
+        
+        try:
+            # Status distribution
+            status_pipeline = [
+                {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+                {"$sort": {"count": -1}}
+            ]
+            status_data = list(self.log_manager.logs.aggregate(status_pipeline))
+            
+            if status_data:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**Status Distribution:**")
+                    df_status = pd.DataFrame(status_data)
+                    df_status.columns = ['Status', 'Count']
+                    st.bar_chart(df_status.set_index('Status'))
+                
+                with col2:
+                    st.write("**Priority Distribution:**")
+                    priority_pipeline = [
+                        {"$group": {"_id": "$priority", "count": {"$sum": 1}}},
+                        {"$sort": {"count": -1}}
+                    ]
+                    priority_data = list(self.log_manager.logs.aggregate(priority_pipeline))
+                    if priority_data:
+                        df_priority = pd.DataFrame(priority_data)
+                        df_priority.columns = ['Priority', 'Count']
+                        st.bar_chart(df_priority.set_index('Priority'))
+            else:
+                st.info("📭 No data available for statistics")
+        except Exception as e:
+            st.error(f"❌ Error generating statistics: {str(e)}")
+    
+    def _render_data_export(self):
+        """Render data export functionality"""
+        st.subheader("📤 Data Export")
+        
+        if st.button("📊 Export All Logs to CSV"):
+            try:
+                logs = list(self.log_manager.logs.find({}))
+                if logs:
+                    # Convert to DataFrame
+                    df = pd.DataFrame(logs)
+                    # Handle ObjectId columns
+                    if '_id' in df.columns:
+                        df['_id'] = df['_id'].astype(str)
+                    if 'project_id' in df.columns:
+                        df['project_id'] = df['project_id'].astype(str)
+                    
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="💾 Download CSV",
+                        data=csv,
+                        file_name=f"project_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
                     )
-
-                st.button(
-                    "🗑️ Delete this log", 
-                    key=f"delete_{i}", 
-                    on_click=lambda idx=i: delete_log_row(idx)
-                )
-
-
-def handle_date_change(backend, username, selected_date):
-    """Handle date change and fetch logs for new date"""
-    if st.session_state.last_selected_date != selected_date:
-        selected_date_str = selected_date.strftime("%Y-%m-%d")
-        fetched_logs = backend.fetch_logs(selected_date_str, username)
+                    st.success(f"📊 Ready to download {len(logs)} log entries")
+                else:
+                    st.info("📭 No logs available to export")
+            except Exception as e:
+                st.error(f"❌ Error exporting data: {str(e)}")
+    
+    def run(self):
+        """Main method to run the Streamlit application"""
+        self.setup_page_config()
         
-        st.session_state.logs = []
-        for log in fetched_logs:
-            st.session_state.logs.append(ensure_log_fields(log))
+        # Check database connection
+        if not self.log_manager.client:
+            st.error("Cannot proceed without database connection")
+            return        
+        # Check user role from session state
+        user_role = st.session_state.get("role", "user")
         
-        if not st.session_state.logs:
-            st.session_state.logs.append(create_default_log())
-        
-        st.session_state.last_selected_date = selected_date
-
-
-def render_save_button(backend, username, selected_date):
-    """Render save button and handle save operation"""
-    if st.button("💾 Save"):
-        selected_date_str = selected_date.strftime("%Y-%m-%d")
-        if backend.save_logs(selected_date_str, username, st.session_state.logs):
-            st.success("Logs saved to MongoDB successfully!")
-
-
-@st.cache_data(ttl=300)  # Cache for 5 minutes to improve performance
-def get_cached_client_data():
-    """Get cached client data"""
-    backend = LogBackend()
-    return backend.get_client_data()
+        if user_role == "admin":
+            # Show all tabs for admin users
+            tab_dashboard, tab_user_logs, tab_project_overview, tab_admin = st.tabs([
+                "Dashboard", "User Logs", "Project Overview", "Admin Panel"
+            ])
+            
+            with tab_dashboard:
+                self.render_dashboard_tab()
+                
+            with tab_user_logs:
+                self.render_user_logs_tab(is_admin=True)
+                
+            with tab_project_overview:
+                self.render_project_overview_tab()
+                
+            with tab_admin:
+                self.render_admin_panel_tab()
+        else:
+            # Show only User Logs tab for regular users
+            st.header("My Tasks")
+            self.render_user_logs_tab(is_admin=False)
 
 
 def run():
-    """Main function to run the log application"""
-    # Login check
-    if not is_logged_in():
-        st.switch_page("option.py")
-
-    # Initialize
-    username = st.session_state["username"]
-    backend = LogBackend()
-    initialize_session_state()
-
-    # Get data
-    client_names, client_dict = get_cached_client_data()
-    user_projects = backend.get_user_projects(username)
-
-    # Render UI components
-    selected_date = render_date_controls(backend, username)
-    handle_date_change(backend, username, selected_date)
-    render_log_table(backend, username, selected_date, user_projects, client_names, client_dict)
-    render_save_button(backend, username, selected_date)
+    """Entry point for the Streamlit application"""
+    app = ProjectLogFrontend()
+    app.run()
