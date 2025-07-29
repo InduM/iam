@@ -82,7 +82,6 @@ def update_substage_completion(project_name, stage_idx, substage_idx, completed=
 
 def display_project_details():
     """Display project details with custom data structure support"""
-    st.title("📁 Project Details")
    
     # Back button at the top
     if st.button("⬅️ Back to Profile", key="back_to_profile"):
@@ -328,28 +327,28 @@ def display_project_details():
                         else:
                             priority_color = "🟢"
                         
-                        st.markdown(f"  {substage_icon} **{substage.get('name', 'Unnamed Substage')}**")
-                        st.markdown(f"    📝 {substage.get('description', 'No description')}")
+                        st.markdown(f"{substage_icon} **{substage.get('name', 'Unnamed Substage')}**")
+                        st.markdown(f" 📝 {substage.get('description', 'No description')}")
                         
                         # Substage details in columns
                         col_sub1, col_sub2 = st.columns(2)
                         with col_sub1:
                             assignees = substage.get('assignees', [])
                             if assignees:
-                                st.markdown(f"    👤 **Assignees:** {', '.join(assignees)}")
+                                st.markdown(f"👤 **Assignees:** {', '.join(assignees)}")
                             
                             substage_deadline = substage.get('deadline', '')
                             if substage_deadline:
                                 formatted_sub_deadline = format_date(substage_deadline)
-                                st.markdown(f"    📅 **Deadline:** {formatted_sub_deadline}")
+                                st.markdown(f"📅 **Deadline:** {formatted_sub_deadline}")
                         
                         with col_sub2:
-                            st.markdown(f"    {priority_color} **Priority:** {priority}")
+                            st.markdown(f"{priority_color} **Priority:** {priority}")
                             
                             start_date = substage.get('start_date', '')
                             if start_date:
                                 formatted_start = format_date(start_date)
-                                st.markdown(f"    📅 **Start:** {formatted_start}")
+                                st.markdown(f"📅 **Start:** {formatted_start}")
                         
                         # Show completion timestamp if available
                         if completion_timestamp:
@@ -462,11 +461,7 @@ def display_project_details():
                 st.session_state.edit_project = selected_project
                 st.rerun()
     
-    with col_btn2:
-        if st.button("📊 View Analytics", key="view_analytics"):
-            with loading_state("Loading analytics..."):
-                st.session_state.show_project_analytics = selected_project
-                st.rerun()
+   
     
     with col_btn3:
         if st.button("⏭️ Advance Stage", key="advance_stage"):

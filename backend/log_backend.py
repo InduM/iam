@@ -77,8 +77,8 @@ class ProjectLogManager:
                         substage_id = substage.get('id')
                         substage_name = substage.get('name', 'Unnamed Substage')
                         assignees = substage.get('assignees', [])
-                        substage_deadline = substage.get('deadline', '')
-                        start_date = substage.get('start_date', '')
+                        substage_deadline = substage.get('deadline','1970-01-01 00:00:00')
+                        start_date = substage.get('start_date', '1970-01-01 00:00:00')
                         is_completed = substage.get('completed', False)
                         priority = substage.get('priority', 'Medium')
                         description = substage.get('description', '')
@@ -148,7 +148,7 @@ class ProjectLogManager:
                     current_status = calculate_status(
                         log["start_date"],
                         log["stage_deadline"],
-                        log.get("substage_deadline", ""),
+                        log.get("substage_deadline", '1970-01-01 00:00:00'),
                         log.get("is_completed", False)
                     )
                     if current_status != log["status"]:
@@ -175,7 +175,6 @@ class ProjectLogManager:
             # Update statuses based on current date
             for log in logs:
                 if not log.get("is_completed", False):
-                    from utilss import calculate_status
                     current_status = calculate_status(
                         log["start_date"],
                         log["stage_deadline"],
@@ -256,35 +255,39 @@ class ProjectLogManager:
             return False
 
     def get_all_users(self, project_name: str = None) -> List[str]:
-        """Get all unique assignees from project assignments"""
+        """Get all unique members from stage assignments"""
         try:
+            users = set()
+            
             if project_name:
-                # Get unique assignees from specific project
-                pipeline = [
-                    {"$match": {"name": project_name}},
-                    {"$unwind": "$stage_assignments"},
-                    {"$unwind": "$stage_assignments.substages"},
-                    {"$unwind": "$stage_assignments.substages.assignees"},
-                    {"$group": {"_id": "$stage_assignments.substages.assignees"}},
-                    {"$sort": {"_id": 1}}
-                ]
+                # Get specific project
+                project = self.projects.find_one({"name": project_name})
+                if project:
+                    projects_to_process = [project]
+                else:
+                    return []
             else:
-                # Get unique assignees from all projects
-                pipeline = [
-                    {"$unwind": "$stage_assignments"},
-                    {"$unwind": "$stage_assignments.substages"},
-                    {"$unwind": "$stage_assignments.substages.assignees"},
-                    {"$group": {"_id": "$stage_assignments.substages.assignees"}},
-                    {"$sort": {"_id": 1}}
-                ]
+                # Get all projects
+                projects_to_process = list(self.projects.find({}))
             
-            result = list(self.projects.aggregate(pipeline))
-            users = [user["_id"] for user in result if user["_id"]]
+            for project in projects_to_process:
+                stage_assignments = project.get("stage_assignments", {})
+                
+                # Iterate through all stages
+                for stage_key, stage_data in stage_assignments.items():
+                    members = stage_data.get("members", [])
+                    users.update(members)
             
-            return users
+            # Convert to sorted list and filter out empty strings
+            result = sorted([user for user in users if user and user.strip()])
+       
+            return result
+            
         except Exception as e:
             st.error(f"Error fetching users: {str(e)}")
+            print(f"Detailed error: {e}")
             return []
+        
 
     def get_project_users(self, project_name: str) -> List[str]:
         """Get all unique assignees for a specific project"""
@@ -352,7 +355,6 @@ class ProjectLogManager:
             updated_count = 0
             
             for log in logs:
-                from utilss import calculate_status
                 current_status = calculate_status(
                     log["start_date"],
                     log["stage_deadline"],

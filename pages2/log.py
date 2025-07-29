@@ -17,7 +17,6 @@ class ProjectLogFrontend:
         
     def render_dashboard_tab(self):
         """Render the Dashboard tab content"""
-        st.header("📊 Dashboard Overview")
         
         # Refresh logs button
         if st.button("🔄 Refresh Logs from Projects", type="primary"):

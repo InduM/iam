@@ -1,5 +1,5 @@
 import streamlit as st
-from backend.projects_backend import update_project_level_in_db
+from backend.projects_backend import update_project_level_in_db,move_project_to_completed
 from utils.utils_project_core import (
     get_current_timestamp,
     notify_assigned_members,
@@ -7,6 +7,7 @@ from utils.utils_project_core import (
 from .project_helpers import(
     _get_user_email_from_username,
 )
+from backend.users_backend import UserService, DatabaseManager
 class ProjectCompletionChecker:
     """Unified completion checker for projects, stages, and substages"""
     
@@ -102,7 +103,6 @@ class ProjectCompletionChecker:
             team_members = self.project.get("team", [])
             
             if project_name and team_members:
-                from backend.projects_backend import move_project_to_completed
                 moved_count = move_project_to_completed(project_name, team_members)
                 completion_status.update({
                     "moved_to_completed": moved_count > 0,
@@ -344,7 +344,6 @@ def _handle_substage_completion_cleanup(project_name, stage_name, substage_name,
         
         # If user has no future assignments, remove project from their current projects
         if not user_has_future_assignments:
-            from backend.users_backend import UserService, DatabaseManager
             
             db_manager = DatabaseManager()
             user_service = UserService(db_manager)
@@ -368,8 +367,6 @@ def _remove_user_from_completed_project(project_name, username, current_level, p
     Only called when a stage/substage is completed.
     """
     try:
-        from backend.users_backend import UserService, DatabaseManager
-        
         db_manager = DatabaseManager()
         user_service = UserService(db_manager)
         

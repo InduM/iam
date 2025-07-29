@@ -204,7 +204,7 @@ def validate_users_exist(usernames):
         return False, []
     
 
-##````cant understand the implementation
+# think about assignees as well
 def send_assignment_notifications(project_name, stage_assignments, changed_assignments_only=False, old_assignments=None):
     """
     Send email notifications for stage assignments

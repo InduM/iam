@@ -2,7 +2,6 @@
 import streamlit as st
 from utils.utils_login import check_login
 
-#def login():
 def run():
 
     with st.container():

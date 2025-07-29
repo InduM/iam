@@ -99,7 +99,6 @@ def _handle_create_project(name, client, description, start, due):
                 if sync_result["added"] > 0:
                     st.success(f"✅ Project created and added to {sync_result['added']} user profiles")
             else:
-                print("SYNC RESULT:", sync_result)
                 st.error("❌ Failed to sync user assignments")
             # Complete form state reset
             _reset_create_form_state()
@@ -175,7 +174,6 @@ def handle_save_project(pid, project, name, client, description, start, due, ori
                         users_to_add=users_to_add, 
                         users_to_remove=users_to_remove
                     )
-                print("SYNC RESULT::", sync_result) 
                 if sync_result["success"]:
             # Send notifications for changes
                     send_assignment_notifications(

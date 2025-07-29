@@ -202,7 +202,7 @@ class UserInterface:
     def _show_profile_details(self, member):
         """Show profile details in read-only mode"""
         st.markdown(f"**Email:** {member['email']}")
-        st.markdown(f"**Role:** {member['position']}")
+        st.markdown(f"**Role:** {member['role']}")
         st.markdown(f"**Branch:** {member['branch']}")
         
         # Display current projects
