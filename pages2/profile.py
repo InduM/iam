@@ -1,4 +1,5 @@
 import streamlit as st
+from pymongo import MongoClient
 import time
 from datetime import datetime
 from utils.utils_login import is_logged_in
@@ -26,59 +27,189 @@ def loading_state(message: str = "Loading...", success_message: Optional[str] = 
 
 def update_project_stage(project_name, new_stage):
     """
-    Update project stage in database
-    Replace this with your actual database update logic
-    """
-    # Example MongoDB update (uncomment and modify for your setup):
-    # from pymongo import MongoClient
-    # client = MongoClient('your_mongodb_connection_string')
-    # db = client['your_database_name']
-    # collection = db['your_collection_name']
-    # 
-    # current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    # result = collection.update_one(
-    #     {'name': project_name},
-    #     {
-    #         '$set': {
-    #             'level': new_stage,
-    #             'updated_at': datetime.now().isoformat(),
-    #             f'timestamps.{new_stage}': current_time
-    #         }
-    #     }
-    # )
-    # return result.modified_count > 0
+    Update project stage in MongoDB Atlas
     
-    # For demo purposes
-    return True
-
+    Args:
+        project_name (str): Name of the project to update
+        new_stage (dict or int): New stage information
+            - If dict: should contain 'stage_key', 'stage_name', 'stage_deadline' (optional)
+            - If int: stage index, will use predefined stage mappings
+    
+    Returns:
+        dict: Result of the update operation
+    """
+    
+    
+    try:
+        # Connect to MongoDB Atlas
+        client = MongoClient(st.secrets["MONGO_URI"])
+        
+        # Access database and collection - adjust names as needed
+        db = client['user_db']  # Replace with your database name
+        collection = db['logs']  # Replace with your collection name
+        
+        # Process new_stage parameter
+        if isinstance(new_stage, int):
+            if new_stage not in stage_mappings:
+                client.close()
+                return {
+                    "success": False,
+                    "error": f"Invalid stage index: {new_stage}. Valid stages: {list(stage_mappings.keys())}",
+                    "project_name": project_name
+                }
+            stage_info = stage_mappings[new_stage]
+        elif isinstance(new_stage, dict):
+            stage_info = new_stage
+            # Validate required fields
+            if "stage_key" not in stage_info or "stage_name" not in stage_info:
+                client.close()
+                return {
+                    "success": False,
+                    "error": "Stage dict must contain 'stage_key' and 'stage_name'",
+                    "project_name": project_name
+                }
+        else:
+            client.close()
+            return {
+                "success": False,
+                "error": "new_stage must be an integer or dictionary",
+                "project_name": project_name
+            }
+        
+        # Prepare update fields
+        update_fields = {
+            "stage_key": stage_info["stage_key"],
+            "stage_name": stage_info["stage_name"],
+            "updated_at": datetime.now()
+        }
+        
+        # Add stage deadline if provided
+        if "stage_deadline" in stage_info:
+            if isinstance(stage_info["stage_deadline"], str):
+                # Convert string date to datetime if needed
+                try:
+                    update_fields["stage_deadline"] = datetime.fromisoformat(stage_info["stage_deadline"])
+                except ValueError:
+                    update_fields["stage_deadline"] = stage_info["stage_deadline"]
+            else:
+                update_fields["stage_deadline"] = stage_info["stage_deadline"]
+        
+        # Reset substage information when moving to new stage
+        update_fields.update({
+            "substage_id": None,
+            "substage_name": None,
+            "substage_deadline": None,
+            "is_completed": False,
+            "status": "In Progress",
+            "completed_at": None
+        })
+        
+        # Update query - find by project name
+        query = {"project_name": project_name}
+        
+        # Perform the update
+        result = collection.update_many(  # Use update_many in case there are multiple documents per project
+            query,
+            {"$set": update_fields}
+        )
+        
+        # Close connection
+        client.close()
+        
+        # Return result summary
+        return {
+            "success": result.modified_count > 0,
+            "matched_count": result.matched_count,
+            "modified_count": result.modified_count,
+            "project_name": project_name,
+            "new_stage_key": stage_info["stage_key"],
+            "new_stage_name": stage_info["stage_name"],
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "project_name": project_name
+        }
 
 def update_substage_completion(project_name, stage_idx, substage_idx, completed=True):
     """
-    Update substage completion status in database
-    """
-    # Example MongoDB update (uncomment and modify for your setup):
-    # from pymongo import MongoClient
-    # client = MongoClient('your_mongodb_connection_string')
-    # db = client['your_database_name']
-    # collection = db['your_collection_name']
-    # 
-    # current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    # update_data = {
-    #     f'substage_completion.{stage_idx}.{substage_idx}': completed,
-    #     'updated_at': datetime.now().isoformat()
-    # }
-    # 
-    # if completed:
-    #     update_data[f'substage_timestamps.{stage_idx}.{substage_idx}'] = current_time
-    # 
-    # result = collection.update_one(
-    #     {'name': project_name},
-    #     {'$set': update_data}
-    # )
-    # return result.modified_count > 0
+    Update substage completion status in MongoDB Atlas
     
-    # For demo purposes
-    return True
+    Args:
+        project_name (str): Name of the project
+        stage_idx (int): Stage index (0-based)
+        substage_idx (int): Substage index (0-based)
+        completed (bool): Completion status (default: True)
+    
+    Returns:
+        dict: Result of the update operation
+    """
+    try:
+        # Connect to MongoDB Atlas
+        client = MongoClient(st.secrets["MONGO_URI"])
+        # Access database and collection - adjust names as needed
+        db = client['user_db']  # Replace with your database name
+        collection = db['logs']  # Replace with your collection name
+        
+        # Build the substage identifier based on the pattern from your document
+        substage_id = f"substage_{stage_idx}_{substage_idx}_{int(datetime.now().timestamp())}"
+        
+        # Prepare update fields
+        update_fields = {
+            "is_completed": completed,
+            "status": "Completed" if completed else "In Progress",
+            "updated_at": datetime.now()
+        }
+        
+        # Add completion timestamp if marking as completed
+        if completed:
+            update_fields["completed_at"] = datetime.now()
+        else:
+            # Remove completion timestamp if marking as incomplete
+            update_fields["completed_at"] = None
+        
+        # Update query - find by project name and substage identifier
+        query = {
+            "project_name": project_name,
+            "stage_key": str(stage_idx),
+            "$or": [
+                {"substage_id": {"$regex": f"^substage_{stage_idx}_{substage_idx}_"}},
+                {"substage_name": {"$exists": True}}  # Fallback for substage identification
+            ]
+        }
+        
+        # Perform the update
+        result = collection.update_one(
+            query,
+            {"$set": update_fields}
+        )
+        
+        # Close connection
+        client.close()
+        
+        # Return result summary
+        return {
+            "success": result.modified_count > 0,
+            "matched_count": result.matched_count,
+            "modified_count": result.modified_count,
+            "project_name": project_name,
+            "stage_idx": stage_idx,
+            "substage_idx": substage_idx,
+            "completed": completed,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "project_name": project_name,
+            "stage_idx": stage_idx,
+            "substage_idx": substage_idx
+        }
 
 def display_project_details():
     """Display project details with custom data structure support"""
@@ -352,7 +483,7 @@ def display_project_details():
                         
                         # Show completion timestamp if available
                         if completion_timestamp:
-                            st.markdown(f"    ✅ **Completed:** {completion_timestamp}")
+                            st.markdown(f"✅ **Completed:** {completion_timestamp}")
                         
                         # Add substage completion toggle for current stage
                         if i == current_level:
@@ -460,8 +591,6 @@ def display_project_details():
             with loading_state("Preparing edit interface..."):
                 st.session_state.edit_project = selected_project
                 st.rerun()
-    
-   
     
     with col_btn3:
         if st.button("⏭️ Advance Stage", key="advance_stage"):
