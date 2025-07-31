@@ -282,58 +282,8 @@ class ProjectLogFrontend:
                     progress = data['completed'] / data['total']
                     st.progress(progress)
             with col2:
-                st.write(f"**{stage}:** {data['completed']}/{data['total']}")
-    
-    def render_admin_panel_tab(self):
-        """Render the Admin Panel tab content"""
+                st.write(f"**{stage}:** {data['completed']}/{data['total']}")  
         
-        tab1, tab2, tab3 = st.tabs(["Database Operations", "Statistics", "Data Export"])
-        
-        with tab1:
-            self._render_database_operations()
-        
-        with tab2:
-            self._render_statistics()
-        
-        with tab3:
-            self._render_data_export()
-    
-    def _render_database_operations(self):
-        """Render database operations section"""
-        st.subheader("🔄 Database Operations")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("📥 Extract All Assignments", type="primary"):
-                with st.spinner("Extracting assignments from all projects..."):
-                    logs_created = self.log_manager.extract_and_create_logs()
-                    st.success(f"✅ Created {logs_created} log entries")
-            
-            if st.button("🔄 Update All Statuses"):
-                with st.spinner("Updating all task statuses..."):
-                    logs = list(self.log_manager.logs.find({"is_completed": False}))
-                    updated_count = 0
-                    
-                    for log in logs:
-                        current_status = self.log_manager.calculate_status(
-                            log["start_date"],
-                            log["stage_deadline"],
-                            log.get("substage_deadline", ""),
-                            log.get("is_completed", False)
-                        )
-                        if current_status != log["status"]:
-                            self.log_manager.logs.update_one(
-                                {"_id": log["_id"]},
-                                {"$set": {"status": current_status, "updated_at": datetime.now()}}
-                            )
-                            updated_count += 1
-                    
-                    st.success(f"✅ Updated {updated_count} task statuses")
-        
-        with col2:
-            self._render_delete_operations()
-    
     def _render_delete_operations(self):
         """Render delete operations with confirmation"""
         # Show current log count
@@ -381,71 +331,7 @@ class ProjectLogFrontend:
                     st.session_state.confirm_delete = False
                     st.rerun()
     
-    def _render_statistics(self):
-        """Render detailed statistics"""
-        st.subheader("📊 Detailed Statistics")
-        
-        try:
-            # Status distribution
-            status_pipeline = [
-                {"$group": {"_id": "$status", "count": {"$sum": 1}}},
-                {"$sort": {"count": -1}}
-            ]
-            status_data = list(self.log_manager.logs.aggregate(status_pipeline))
-            
-            if status_data:
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.write("**Status Distribution:**")
-                    df_status = pd.DataFrame(status_data)
-                    df_status.columns = ['Status', 'Count']
-                    st.bar_chart(df_status.set_index('Status'))
-                
-                with col2:
-                    st.write("**Priority Distribution:**")
-                    priority_pipeline = [
-                        {"$group": {"_id": "$priority", "count": {"$sum": 1}}},
-                        {"$sort": {"count": -1}}
-                    ]
-                    priority_data = list(self.log_manager.logs.aggregate(priority_pipeline))
-                    if priority_data:
-                        df_priority = pd.DataFrame(priority_data)
-                        df_priority.columns = ['Priority', 'Count']
-                        st.bar_chart(df_priority.set_index('Priority'))
-            else:
-                st.info("📭 No data available for statistics")
-        except Exception as e:
-            st.error(f"❌ Error generating statistics: {str(e)}")
     
-    def _render_data_export(self):
-        """Render data export functionality"""
-        st.subheader("📤 Data Export")
-        
-        if st.button("📊 Export All Logs to CSV"):
-            try:
-                logs = list(self.log_manager.logs.find({}))
-                if logs:
-                    # Convert to DataFrame
-                    df = pd.DataFrame(logs)
-                    # Handle ObjectId columns
-                    if '_id' in df.columns:
-                        df['_id'] = df['_id'].astype(str)
-                    if 'project_id' in df.columns:
-                        df['project_id'] = df['project_id'].astype(str)
-                    
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="💾 Download CSV",
-                        data=csv,
-                        file_name=f"project_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv"
-                    )
-                    st.success(f"📊 Ready to download {len(logs)} log entries")
-                else:
-                    st.info("📭 No logs available to export")
-            except Exception as e:
-                st.error(f"❌ Error exporting data: {str(e)}")
     
     def run(self):
         """Main method to run the Streamlit application"""
@@ -460,8 +346,8 @@ class ProjectLogFrontend:
         
         if user_role == "admin":
             # Show all tabs for admin users
-            tab_dashboard, tab_user_logs, tab_project_overview, tab_admin = st.tabs([
-                "Dashboard", "User Logs", "Project Overview", "Admin Panel"
+            tab_dashboard, tab_user_logs, tab_project_overview = st.tabs([
+                "Dashboard", "User Logs", "Project Overview", 
             ])
             
             with tab_dashboard:
@@ -473,8 +359,7 @@ class ProjectLogFrontend:
             with tab_project_overview:
                 self.render_project_overview_tab()
                 
-            with tab_admin:
-                self.render_admin_panel_tab()
+            
         else:
             # Show only User Logs tab for regular users
             st.header("My Tasks")
