@@ -395,7 +395,6 @@ def get_overdue_stages_and_substages(stage_assignments, project_levels, current_
     
     return overdue_items
 
-
 # Backward compatibility wrapper functions
 def validate_stage_substage_dates(stage_assignments: Dict, project_due_date: Union[date, str], 
                                  display_conflicts: bool = True) -> List[str]:

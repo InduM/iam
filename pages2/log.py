@@ -329,9 +329,7 @@ class ProjectLogFrontend:
             with col_confirm2:
                 if st.button("❌ Cancel", key="confirm_delete_no"):
                     st.session_state.confirm_delete = False
-                    st.rerun()
-    
-    
+                    st.rerun()  
     
     def run(self):
         """Main method to run the Streamlit application"""
@@ -358,8 +356,7 @@ class ProjectLogFrontend:
                 
             with tab_project_overview:
                 self.render_project_overview_tab()
-                
-            
+                           
         else:
             # Show only User Logs tab for regular users
             st.header("My Tasks")

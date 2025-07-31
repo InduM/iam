@@ -109,4 +109,4 @@ else:
         st.session_state.authenticated = False
         st.rerun()
     else:
-        load_page(selected.lower())  # Load 'profile' or 'settings'""
+        load_page(selected.lower()) 
