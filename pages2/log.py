@@ -180,16 +180,17 @@ class ProjectLogFrontend:
             
             # Display tasks by user
             for user, tasks in user_tasks.items():
-                with st.expander(f"👤 {user} ({len(tasks)} tasks)"):
-                    # Apply filters to user's tasks
-                    filtered_tasks = self._render_user_filters(tasks, project_filter)
-                    self._render_task_list(filtered_tasks)
+                st.write(f"### 👤 {user} ({len(tasks)} tasks)")
+                # Apply filters to user's tasks with unique key
+                filtered_tasks = self._render_user_filters(tasks, project_filter, filter_key_suffix=user.replace(" ", "_"))
+                self._render_task_list(filtered_tasks, use_expanders=False)
+                st.divider()  # Add visual separation between users
         else:
             if project_filter:
                 st.info(f"📭 No tasks found in {project_filter}")
             else:
                 st.info(f"📭 No tasks found")
-
+                
     def _render_user_tasks(self, selected_user, project_filter):
         """Render tasks for selected user"""
         # Get logs for selected user and project
@@ -201,25 +202,31 @@ class ProjectLogFrontend:
             st.subheader(f"📋 All Tasks for {selected_user}")
         
         if user_logs:
-            # Filters
-            filtered_logs = self._render_user_filters(user_logs, project_filter)
+            # Filters with unique key
+            filtered_logs = self._render_user_filters(user_logs, project_filter, filter_key_suffix=f"single_user_{selected_user.replace(' ', '_')}")
             
             # Display logs
-            self._render_task_list(filtered_logs)
+            self._render_task_list(filtered_logs, use_expanders=True)
         else:
             if project_filter:
                 st.info(f"📭 No logs found for {selected_user} in {project_filter}")
             else:
                 st.info(f"📭 No logs found for {selected_user}")
+
     
-    def _render_user_filters(self, user_logs, project_filter):
+    def _render_user_filters(self, user_logs, project_filter, filter_key_suffix=""):
         """Render filter controls for user logs"""
         col1, col2, col3 = st.columns(3)
         
         with col1:
             all_statuses = list(set([log["status"] for log in user_logs]))
             status_options = ["All"] + all_statuses
-            status_filter = st.multiselect("Filter by Status", status_options, default=["All"])
+            status_filter = st.multiselect(
+                "Filter by Status", 
+                status_options, 
+                default=["All"],
+                key=f"status_filter_{filter_key_suffix}"
+            )
             
             # Handle "All" selection logic for status
             if "All" in status_filter:
@@ -233,7 +240,12 @@ class ProjectLogFrontend:
         with col2:
             all_priorities = list(set([log.get("priority", "Medium") for log in user_logs]))
             priority_options = ["All"] + all_priorities
-            priority_filter = st.multiselect("Filter by Priority", priority_options, default=["All"])
+            priority_filter = st.multiselect(
+                "Filter by Priority", 
+                priority_options, 
+                default=["All"],
+                key=f"priority_filter_{filter_key_suffix}"
+            )
             
             # Handle "All" selection logic for priority
             if "All" in priority_filter:
@@ -251,42 +263,54 @@ class ProjectLogFrontend:
             and log.get("priority", "Medium") in priority_filter
         ]
         return filtered_logs
-    
-    def _render_task_list(self, filtered_logs):
+
+    def _render_task_list(self, filtered_logs, use_expanders=True):
         """Render the list of tasks"""
         for log in filtered_logs:
-            with st.expander(f"🏗️ {log['project_name']} - {log['stage_name']} > {log['substage_name']}"):
-                col1, col2, col3 = st.columns([3, 3, 2])
-                
-                with col1:
-                    st.write(f"**Project:** {log['project_name']}")
-                    st.write(f"**Client:** {log.get('client', 'N/A')}")
-                    st.write(f"**Stage:** {log['stage_name']}")
-                    st.write(f"**Substage:** {log['substage_name']}")
-                    st.write(f"**Status:** {format_status_badge(log['status'])}")
-                    st.write(f"**Priority:** {format_priority_badge(log.get('priority', 'Medium'))}")
-                
-                with col2:
-                    st.write(f"**Start Date:** {log['start_date'] or 'Not Set'}")
-                    st.write(f"**Stage Deadline:** {log['stage_deadline'] or 'Not Set'}")
-                    st.write(f"**Substage Deadline:** {log['substage_deadline'] or 'Not Set'}")
-                    if log.get('description'):
-                        desc = log['description']
-                        st.write(f"**Description:** {desc[:100]}{'...' if len(desc) > 100 else ''}")
-                
-                with col3:
-                    if not log.get('is_completed', False):
-                        if st.button(f"✅ Mark Complete", key=f"complete_{log['_id']}"):
-                            if self.log_manager.complete_task(str(log['_id'])):
-                                st.success("✅ Task completed successfully!")
-                                st.rerun()
-                            else:
-                                st.error("❌ Failed to complete task")
+            if use_expanders:
+                with st.expander(f"🏗️ {log['project_name']} - {log['stage_name']} > {log['substage_name']}"):
+                    self._render_task_details(log)
+            else:
+                # Use containers instead of expanders for nested display
+                with st.container():
+                    st.write(f"**🏗️ {log['project_name']} - {log['stage_name']} > {log['substage_name']}**")
+                    self._render_task_details(log)
+                    st.write("---")  # Add separator between tasks
+
+
+    def _render_task_details(self, log):
+        """Render the details of a single task"""
+        col1, col2, col3 = st.columns([3, 3, 2])
+        
+        with col1:
+            st.write(f"**Project:** {log['project_name']}")
+            st.write(f"**Client:** {log.get('client', 'N/A')}")
+            st.write(f"**Stage:** {log['stage_name']}")
+            st.write(f"**Substage:** {log['substage_name']}")
+            st.write(f"**Status:** {format_status_badge(log['status'])}")
+            st.write(f"**Priority:** {format_priority_badge(log.get('priority', 'Medium'))}")
+        
+        with col2:
+            st.write(f"**Start Date:** {log['start_date'] or 'Not Set'}")
+            st.write(f"**Stage Deadline:** {log['stage_deadline'] or 'Not Set'}")
+            st.write(f"**Substage Deadline:** {log['substage_deadline'] or 'Not Set'}")
+            if log.get('description'):
+                desc = log['description']
+                st.write(f"**Description:** {desc[:100]}{'...' if len(desc) > 100 else ''}")
+        
+        with col3:
+            if not log.get('is_completed', False):
+                if st.button(f"✅ Mark Complete", key=f"complete_{log['_id']}"):
+                    if self.log_manager.complete_task(str(log['_id'])):
+                        st.success("✅ Task completed successfully!")
+                        st.rerun()
                     else:
-                        st.success("✅ Completed")
-                        if log.get('completed_at'):
-                            st.write(f"**Completed:** {log['completed_at'].strftime('%Y-%m-%d %H:%M')}")
-    
+                        st.error("❌ Failed to complete task")
+            else:
+                st.success("✅ Completed")
+                if log.get('completed_at'):
+                    st.write(f"**Completed:** {log['completed_at'].strftime('%Y-%m-%d %H:%M')}")
+                    
     def render_project_overview_tab(self):
         """Render the Project Overview tab content"""        
         # Add refresh button at the top
