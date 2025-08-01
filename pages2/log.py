@@ -18,7 +18,6 @@ class ProjectLogFrontend:
     def render_dashboard_tab(self):
         """Render the Dashboard tab content"""
         
-        # Refresh logs button
         if st.button("🔄 Refresh", type="secondary"):
             with st.spinner("Extracting assignments from projects..."):
                 logs_created = self.log_manager.extract_and_create_logs()
@@ -71,6 +70,7 @@ class ProjectLogFrontend:
         col_refresh, col_spacer = st.columns([1, 4])
         with col_refresh:
             if st.button("🔄 Refresh", key="refresh_user_logs"):
+                logs_created = self.log_manager.extract_and_create_logs()
                 st.rerun()
         
         # Get current user info
@@ -87,23 +87,38 @@ class ProjectLogFrontend:
             col1, col2 = st.columns(2)
             
             with col1:
+                # Use session state to maintain selection
+                if 'selected_project' not in st.session_state:
+                    st.session_state.selected_project = "All Projects"
+                    
                 selected_project = st.selectbox(
                     "Select Project", 
                     project_options,
+                    index=project_options.index(st.session_state.selected_project) if st.session_state.selected_project in project_options else 0,
                     format_func=lambda x: x if x == "All Projects" else f"{x} ({next((p['client'] for p in projects if p['name'] == x), 'N/A')})"
                 )
+                st.session_state.selected_project = selected_project
             
             # Get users based on project selection and role
             if selected_project == "All Projects":
-                users = self.log_manager.get_all_users()
+                users = ["All Users"] + self.log_manager.get_all_users()
                 project_filter = None
             else:
-                users = self.log_manager.get_project_users(selected_project)
+                users = ["All Users"] + self.log_manager.get_project_users(selected_project)
                 project_filter = selected_project
             
             with col2:
-                if users:
-                    selected_user = st.selectbox("Select User", users)
+                if users and len(users) > 1:  # More than just "All Users"
+                    # Use session state to maintain user selection
+                    if 'selected_user' not in st.session_state:
+                        st.session_state.selected_user = "All Users"
+                        
+                    selected_user = st.selectbox(
+                        "Select User", 
+                        users,
+                        index=users.index(st.session_state.selected_user) if st.session_state.selected_user in users else 0
+                    )
+                    st.session_state.selected_user = selected_user
                 else:
                     st.warning(f"⚠️ No users found for {selected_project}")
                     selected_user = None
@@ -114,11 +129,17 @@ class ProjectLogFrontend:
             if user_projects:
                 project_options = ["All Projects"] + user_projects
                 
+                # Use session state to maintain project selection for regular users
+                if 'selected_project' not in st.session_state:
+                    st.session_state.selected_project = "All Projects"
+                    
                 selected_project = st.selectbox(
                     "Select Project", 
                     project_options,
+                    index=project_options.index(st.session_state.selected_project) if st.session_state.selected_project in project_options else 0,
                     format_func=lambda x: x if x == "All Projects" else f"{x} ({next((p['client'] for p in projects if p['name'] == x), 'N/A')})"
                 )
+                st.session_state.selected_project = selected_project
                 
                 # Set project filter
                 project_filter = None if selected_project == "All Projects" else selected_project
@@ -128,8 +149,10 @@ class ProjectLogFrontend:
                 selected_user = None
                 project_filter = None
         
-        if selected_user:
+        if selected_user and selected_user != "All Users":
             self._render_user_tasks(selected_user, project_filter)
+        elif selected_user == "All Users" and is_admin:
+            self._render_all_users_tasks(project_filter)
         else:
             if is_admin:
                 if selected_project != "All Projects":
@@ -137,6 +160,35 @@ class ProjectLogFrontend:
                 else:
                     st.info("ℹ️ Please select a user to view their tasks")
 
+    def _render_all_users_tasks(self, project_filter):
+        """Render tasks for all users (admin only)"""
+        if project_filter:
+            all_logs = list(self.log_manager.logs.find({"project_name": project_filter}))
+            st.subheader(f"📋 All Tasks in {project_filter}")
+        else:
+            all_logs = list(self.log_manager.logs.find({}))
+            st.subheader(f"📋 All Tasks (All Projects)")
+        
+        if all_logs:
+            # Group by user
+            user_tasks = {}
+            for log in all_logs:
+                user = log['assigned_user']
+                if user not in user_tasks:
+                    user_tasks[user] = []
+                user_tasks[user].append(log)
+            
+            # Display tasks by user
+            for user, tasks in user_tasks.items():
+                with st.expander(f"👤 {user} ({len(tasks)} tasks)"):
+                    # Apply filters to user's tasks
+                    filtered_tasks = self._render_user_filters(tasks, project_filter)
+                    self._render_task_list(filtered_tasks)
+        else:
+            if project_filter:
+                st.info(f"📭 No tasks found in {project_filter}")
+            else:
+                st.info(f"📭 No tasks found")
 
     def _render_user_tasks(self, selected_user, project_filter):
         """Render tasks for selected user"""
@@ -169,38 +221,35 @@ class ProjectLogFrontend:
             status_options = ["All"] + all_statuses
             status_filter = st.multiselect("Filter by Status", status_options, default=["All"])
             
-            # If "All" is selected, use all statuses for filtering
+            # Handle "All" selection logic for status
             if "All" in status_filter:
-                status_filter = all_statuses
+                if len(status_filter) > 1:
+                    # If "All" and other options are selected, remove "All" and keep specific selections
+                    status_filter = [s for s in status_filter if s != "All"]
+                else:
+                    # If only "All" is selected, use all statuses for filtering
+                    status_filter = all_statuses
+            
         with col2:
             all_priorities = list(set([log.get("priority", "Medium") for log in user_logs]))
             priority_options = ["All"] + all_priorities
             priority_filter = st.multiselect("Filter by Priority", priority_options, default=["All"])
             
-            # If "All" is selected, use all priorities for filtering
+            # Handle "All" selection logic for priority
             if "All" in priority_filter:
-                priority_filter = all_priorities
-        
-        with col3:
-            if project_filter is None:
-                all_user_projects = list(set([log["project_name"] for log in user_logs]))
-                project_options = ["All"] + all_user_projects
-                user_project_filter = st.multiselect("Filter by Project", project_options, default=["All"])
-                
-                # If "All" is selected, use all projects for filtering
-                if "All" in user_project_filter:
-                    user_project_filter = all_user_projects
-            else:
-                user_project_filter = [project_filter]
-        
+                if len(priority_filter) > 1:
+                    # If "All" and other options are selected, remove "All" and keep specific selections
+                    priority_filter = [p for p in priority_filter if p != "All"]
+                else:
+                    # If only "All" is selected, use all priorities for filtering
+                    priority_filter = all_priorities
+            
         # Apply filters
         filtered_logs = [
             log for log in user_logs 
             if log["status"] in status_filter 
             and log.get("priority", "Medium") in priority_filter
-            and log["project_name"] in user_project_filter
         ]
-        
         return filtered_logs
     
     def _render_task_list(self, filtered_logs):

@@ -212,46 +212,7 @@ class UserInterface:
         
         if st.button("✏️ Edit Profile"):
             SessionManager.set_edit_mode(True)
-            st.rerun()
-        
-        # Show logs if user has permission
-        if SessionManager.get_current_role() in ["manager", "admin"]:
-            self._show_user_logs(member)
-    
-    def _show_user_logs(self, member):
-        """Show user logs section"""
-        st.subheader("📋 Daily Logs")
-        
-        # Date selector
-        selected_log_date = st.date_input(
-            "📅 Select a date to view logs", 
-            value=date.today(), 
-            key="log_view_date"
-        )
-        
-        # Validate email and extract username
-        email = member.get("email", "")
-        if not ValidationUtils.is_valid_email(email):
-            st.warning("⚠️ Cannot retrieve logs: Invalid email format.")
-            return
-        
-        query_username = DataUtils.extract_username_from_email(email)
-        if not query_username:
-            st.warning("⚠️ Cannot retrieve logs: Unable to extract username.")
-            return
-        
-        # Query logs for selected member on that date
-        query_date_str = selected_log_date.strftime("%Y-%m-%d")
-        logs = self.log_service.fetch_user_logs(query_username, query_date_str)
-        
-        if logs:
-            df_logs = pd.DataFrame(logs)
-            st.dataframe(df_logs, use_container_width=True, hide_index=True)
-        else:
-            st.info("📝 No logs found for this date.")
-        
-        # Add refresh button for logs
-        UIHelpers.create_refresh_button("🔄 Refresh Logs", "refresh_logs")
+            st.rerun()  
     
     def show_team(self):
         """Display team overview page"""

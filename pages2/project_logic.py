@@ -181,8 +181,6 @@ def handle_save_project(pid, project, name, client, description, start, due, ori
                         new_assignments, 
                         changed_assignments_only=True, 
                         old_assignments=old_stage_assignments)
-                
-                
                  # Update client counts
                 _update_client_counts_after_edit(project, updated_project.get("client", ""))
                 
@@ -215,12 +213,14 @@ def _handle_project_deletion(pid, project):
         # Remove project from all user profiles
         remove_project_from_all_users(project_name)
         
+        # Remove project from all logs
+        from backend.log_backend import ProjectLogManager
+        log_manager = ProjectLogManager()
+        log_manager.remove_project_from_logs(project_name)
+
         # Update client project count after deletion
         client_name = project.get("client", "")
         update_client_project_count(client_name)
-        from backend.log_backend import ProjectLogManager
-        log_manager = ProjectLogManager()
-        log_manager.extract_and_create_logs()
         st.success(f"✅ Project '{project_name}' deleted and removed from all user profiles!")
     
     st.session_state.confirm_delete[f"confirm_delete_{pid}"] = False
