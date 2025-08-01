@@ -74,67 +74,86 @@ class DatabaseManager:
         return MongoClient(st.secrets["MONGO_URI"])
     
     @staticmethod
-    def update_project_stage(project_name: str, new_stage: Dict[str, Any]) -> Dict[str, Any]:
+    def update_project_stage(project_name, new_stage):
         """
-        Update project stage in MongoDB Atlas.
+        Update a project's stage in MongoDB Atlas.
         
         Args:
-            project_name: Name of the project to update
-            new_stage: New stage information containing stage_key, stage_name, etc.
+            project_name (str): The name of the project to update
+            new_stage (str): The new stage name to set
         
         Returns:
-            Result dictionary with success status and details
+            bool: True if update is successful, False otherwise
         """
+        
         try:
-            client = DatabaseManager.get_mongo_client()
-            db = client['user_db']
-            collection = db['logs']
+            # MongoDB connection configuration
+            # You should store these in st.secrets or environment variables
+            MONGO_CONNECTION_STRING = st.secrets.get("MONGO_URI")
+            COLLECTION_NAME = st.secrets.get("COLLECTION_NAME", "projects")  # Adjust collection name as needed
             
-            # Process new_stage parameter
-            if isinstance(new_stage, int):
-                if new_stage not in stage_mappings:
-                    return DatabaseManager._create_error_response(
-                        f"Invalid stage index: {new_stage}. Valid stages: {list(stage_mappings.keys())}",
-                        project_name
-                    )
-                stage_info = stage_mappings[new_stage]
-            elif isinstance(new_stage, dict):
-                stage_info = new_stage
-                if "stage_key" not in stage_info or "stage_name" not in stage_info:
-                    return DatabaseManager._create_error_response(
-                        "Stage dict must contain 'stage_key' and 'stage_name'",
-                        project_name
-                    )
-            else:
-                return DatabaseManager._create_error_response(
-                    "new_stage must be an integer or dictionary",
-                    project_name
-                )
+            # Connect to MongoDB
+            client = MongoClient(MONGO_CONNECTION_STRING)
+            db = client["user_db"]
+            collection = db[COLLECTION_NAME]
             
-            # Prepare update fields
-            update_fields = DatabaseManager._prepare_stage_update_fields(stage_info)
+            # Find the project by name
+            project = collection.find_one({"name": project_name})
             
-            # Perform the update
-            result = collection.update_many(
-                {"project_name": project_name},
-                {"$set": update_fields}
-            )
+            if not project:
+                st.error(f"Project '{project_name}' not found.")
+                return False
             
-            client.close()
+            # Get valid stages from the project's levels array
+            valid_stages = project.get("levels", [])
             
-            return {
-                "success": result.modified_count > 0,
-                "matched_count": result.matched_count,
-                "modified_count": result.modified_count,
-                "project_name": project_name,
-                "new_stage_key": stage_info["stage_key"],
-                "new_stage_name": stage_info["stage_name"],
-                "timestamp": datetime.now().isoformat()
+            if not valid_stages:
+                st.error(f"No stages defined for project '{project_name}'.")
+                return False
+            
+            # Validate the new stage
+            if new_stage not in valid_stages:
+                st.error(f"Invalid stage '{new_stage}' for project '{project_name}'. Valid stages are: {', '.join(valid_stages)}")
+                return False
+            
+            # Get the new level index based on stage name
+            new_level = valid_stages.index(new_stage)
+            current_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Prepare update data
+            update_data = {
+                "$set": {
+                    "level": new_level,
+                    f"timestamps.{new_level}": current_timestamp,
+                    "updated_at": datetime.now().isoformat()
+                }
             }
             
+            # Perform the update
+            result = collection.update_one(
+                {"name": project_name},
+                update_data
+            )
+            
+            if result.modified_count > 0:
+                st.success(f"Successfully updated project '{project_name}' to stage '{new_stage}'")
+                return True
+            else:
+                st.warning(f"No changes made to project '{project_name}'. It may already be at stage '{new_stage}'")
+                return False
+                
         except Exception as e:
-            return DatabaseManager._create_error_response(str(e), project_name)
-    
+            error_msg = f"Error updating project stage: {str(e)}"
+            st.error(error_msg)
+            return False
+        
+        finally:
+            # Close the MongoDB connection
+            try:
+                client.close()
+            except:
+                pass
+
     @staticmethod
     def update_substage_completion(project_name: str, stage_idx: int, 
                                  substage_idx: int, completed: bool = True) -> Dict[str, Any]:

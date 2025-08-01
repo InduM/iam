@@ -64,10 +64,10 @@ class ClientsBackend:
             # If client name changed, update all related projects
             if result.modified_count > 0 and old_name != new_name:
                 try:
-                    # Update all projects that reference this client
+                    # Update all projects that reference this client (using "client" field)
                     projects_update_result = self.projects_collection.update_many(
-                        {"client_name": old_name},
-                        {"$set": {"client_name": new_name}}
+                        {"client": old_name},
+                        {"$set": {"client": new_name}}
                     )
                     
                     if projects_update_result.modified_count > 0:
@@ -90,8 +90,8 @@ class ClientsBackend:
             if client_to_delete:
                 client_name = client_to_delete.get("client_name", "")
                 
-                # Check if there are any projects using this client
-                related_projects = self.projects_collection.count_documents({"client_name": client_name})
+                # Check if there are any projects using this client (using "client" field)
+                related_projects = self.projects_collection.count_documents({"client": client_name})
                 if related_projects > 0:
                     st.error(f"Cannot delete client. There are {related_projects} project(s) associated with this client. Please delete or reassign those projects first.")
                     return False
@@ -124,7 +124,7 @@ class ClientsBackend:
     def count_related_projects(self, client_name):
         """Count projects associated with a client"""
         try:
-            return self.projects_collection.count_documents({"client_name": client_name})
+            return self.projects_collection.count_documents({"client": client_name})
         except Exception as e:
             st.error(f"Error counting related projects: {e}")
             return 0

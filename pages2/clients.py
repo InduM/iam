@@ -41,7 +41,7 @@ class ClientsFrontend:
     
     def _render_client_card(self, client):
         """Render individual client card"""
-        cid = client["id"]
+        cid = client["_id"]
         client_name = client.get('client_name', 'Unnamed')
         
         # Get project count
@@ -113,8 +113,6 @@ class ClientsFrontend:
 
     def _render_delete_confirmation(self, cid, project_count, confirm_key):
         """Render delete confirmation dialog"""
-        st.warning("Are you sure you want to delete this client?")
-        
         if project_count > 0:
             st.error(f"⚠️ Cannot delete client! This client has {project_count} associated project(s).")
             st.info("Please delete or reassign all associated projects before deleting this client.")
@@ -123,6 +121,7 @@ class ClientsFrontend:
             self._render_cancel_action(cid, confirm_key)
         else:
             # Only show Yes/No buttons when there are no projects
+            st.warning("Are you sure you want to delete this client?")
             self._render_confirmation_actions(cid, confirm_key)
     def show_create_form(self):
         """Display the create client form"""
