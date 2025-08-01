@@ -203,6 +203,7 @@ def _get_users_with_project(project_name):
 
 def _add_project_to_user_profile(username, project_name):
     """Add project to user's profile"""
+  
     try:
         # Initialize services
         db_manager = DatabaseManager()
@@ -293,7 +294,7 @@ def _sync_user_projects_on_stage_change(project_name, old_stage_assignments, new
         
         # Users who were added
         added_users = new_users - old_users
-        
+
         # Users who were removed
         removed_users = old_users - new_users
         
@@ -306,7 +307,9 @@ def _sync_user_projects_on_stage_change(project_name, old_stage_assignments, new
         for username in removed_users:
             if username:
                 _remove_project_from_user_profile(username, project_name)
-                
+        from backend.log_backend import ProjectLogManager
+        log_manager = ProjectLogManager()
+        log_manager.extract_and_create_logs()       
     except Exception as e:
         st.error(f"Error synchronizing user projects on stage change: {str(e)}")
 

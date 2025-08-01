@@ -269,7 +269,7 @@ class UserInterface:
         # Add refresh button for team data
         col_refresh, col_spacer = st.columns([1, 4])
         with col_refresh:
-            UIHelpers.create_refresh_button("🔄 Refresh Team Data")
+            UIHelpers.create_refresh_button("🔄Refresh")
         
         # Create filter controls
         branch_filter, project_filter, search_query = UIHelpers.create_filter_controls(df)

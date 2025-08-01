@@ -218,7 +218,9 @@ def _handle_project_deletion(pid, project):
         # Update client project count after deletion
         client_name = project.get("client", "")
         update_client_project_count(client_name)
-        
+        from backend.log_backend import ProjectLogManager
+        log_manager = ProjectLogManager()
+        log_manager.extract_and_create_logs()
         st.success(f"✅ Project '{project_name}' deleted and removed from all user profiles!")
     
     st.session_state.confirm_delete[f"confirm_delete_{pid}"] = False

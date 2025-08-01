@@ -19,7 +19,7 @@ class ProjectLogFrontend:
         """Render the Dashboard tab content"""
         
         # Refresh logs button
-        if st.button("🔄 Refresh Logs from Projects", type="primary"):
+        if st.button("🔄 Refresh", type="secondary"):
             with st.spinner("Extracting assignments from projects..."):
                 logs_created = self.log_manager.extract_and_create_logs()
                 st.success(f"✅ Created {logs_created} log entries from project assignments")
@@ -67,6 +67,12 @@ class ProjectLogFrontend:
     
     def render_user_logs_tab(self, is_admin=True):
         """Render the User Logs tab content"""        
+        # Add refresh button at the top
+        col_refresh, col_spacer = st.columns([1, 4])
+        with col_refresh:
+            if st.button("🔄 Refresh", key="refresh_user_logs"):
+                st.rerun()
+        
         # Get current user info
         current_user = st.session_state.get("username", "Unknown User")
         user_role = st.session_state.get("role", "user")
@@ -166,7 +172,6 @@ class ProjectLogFrontend:
             # If "All" is selected, use all statuses for filtering
             if "All" in status_filter:
                 status_filter = all_statuses
-        
         with col2:
             all_priorities = list(set([log.get("priority", "Medium") for log in user_logs]))
             priority_options = ["All"] + all_priorities
@@ -235,6 +240,12 @@ class ProjectLogFrontend:
     
     def render_project_overview_tab(self):
         """Render the Project Overview tab content"""        
+        # Add refresh button at the top
+        col_refresh, col_spacer = st.columns([1, 4])
+        with col_refresh:
+            if st.button("🔄 Refresh", key="refresh_project_overview"):
+                st.rerun()
+        
         projects = self.log_manager.get_projects()
         
         if projects:
@@ -373,12 +384,9 @@ class ProjectLogFrontend:
                 
             with tab_project_overview:
                 self.render_project_overview_tab()
-                           
+                        
         else:
-            # Show only User Logs tab for regular users
-            st.header("My Tasks")
             self.render_user_logs_tab(is_admin=False)
-
 
 def run():
     """Entry point for the Streamlit application"""

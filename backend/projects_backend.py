@@ -204,14 +204,23 @@ def get_team_members(role):
 @st.cache_data
 def get_team_members_username(role):
     """Get team members based on role"""
-    collections = get_db_collections()
-    users_collection = collections["users"]
-    
-    if role == "manager":
-        return [u["username"] for u in users_collection.find({"role": "user"}) if "name" in u]
-    else:
-        return [u["username"] for u in users_collection.find() if "username" in u]
-
+    try:
+        collections = get_db_collections()
+        users_collection = collections["users"]
+        
+        if role == "manager":
+            # Managers see users and other managers (including themselves)
+            query = {"role": {"$in": ["user", "manager"]}}
+        else:
+            # Non-managers see all users
+            query = {}
+        
+        users = users_collection.find(query)
+        return [u["username"] for u in users if "username" in u and u["username"]]
+        
+    except Exception as e:
+        print(f"Error fetching team members: {e}")
+        return []
 
 def move_project_to_completed(project_name, team_members):
     """Move project from 'projects' to 'completed_projects' for all team members"""
