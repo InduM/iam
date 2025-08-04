@@ -192,17 +192,28 @@ class ProjectLogFrontend:
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED
         )
         
-        # Handle row selection
-        if grid_response['selected_rows']:
-            selected_idx = grid_response['selected_rows'][0]['_selectedRowNodeInfo']['nodeRowIndex']
-            selected_log_id = df.iloc[selected_idx]['ID']
-            selected_log = next((log for log in recent_logs if str(log["_id"]) == selected_log_id), None)
-            if selected_log:
-                self._show_task_modal(selected_log)
+        # Handle row selection - FIXED: Added proper error handling for DataFrame selection
+        if grid_response.get('selected_rows') and len(grid_response['selected_rows']) > 0:
+            try:
+                selected_row = grid_response['selected_rows'][0]
+                if '_selectedRowNodeInfo' in selected_row and 'nodeRowIndex' in selected_row['_selectedRowNodeInfo']:
+                    selected_idx = selected_row['_selectedRowNodeInfo']['nodeRowIndex']
+                    if 0 <= selected_idx < len(df):
+                        selected_log_id = df.iloc[selected_idx]['ID']
+                        selected_log = next((log for log in recent_logs if str(log["_id"]) == selected_log_id), None)
+                        if selected_log:
+                            self._show_task_modal(selected_log)
+            except (KeyError, IndexError, TypeError) as e:
+                st.warning("⚠️ Unable to load selected task details")
 
     def render_user_logs_tab(self, is_admin=True):
         """Enhanced user logs with better filtering and bulk operations"""
-        all_logs = list(self.log_manager.logs.find({}))
+        try:
+            all_logs = list(self.log_manager.logs.find({}))
+        except Exception as e:
+            st.error(f"❌ Error fetching logs: {str(e)}")
+            return
+            
         if not all_logs:
             st.warning("📭 No logs available")
             return
@@ -222,13 +233,21 @@ class ProjectLogFrontend:
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    projects = self.log_manager.get_projects()
-                    project_names = ["All"] + [p['name'] for p in projects]
-                    selected_project = st.selectbox("Project", project_names)
+                    try:
+                        projects = self.log_manager.get_projects()
+                        project_names = ["All"] + [p['name'] for p in projects]
+                        selected_project = st.selectbox("Project", project_names)
+                    except Exception as e:
+                        st.error(f"❌ Error loading projects: {str(e)}")
+                        selected_project = "All"
                 
                 with col2:
-                    users = ["All Users"] + self.log_manager.get_all_users()
-                    selected_user = st.selectbox("User", users)
+                    try:
+                        users = ["All Users"] + self.log_manager.get_all_users()
+                        selected_user = st.selectbox("User", users)
+                    except Exception as e:
+                        st.error(f"❌ Error loading users: {str(e)}")
+                        selected_user = "All Users"
                 
                 with col3:
                     status_filter = st.multiselect(
@@ -240,8 +259,8 @@ class ProjectLogFrontend:
                 
                 with col4:
                     priority_filter = st.multiselect(
-                        "Priority", ["High", "Medium", "Low"],
-                        default=["High", "Medium", "Low"]
+                        "Priority", ["High", "Medium", "Low","Critical"],
+                        default=["High", "Medium", "Low","Critical"]
                     )
                 
                 with col5:
@@ -253,11 +272,15 @@ class ProjectLogFrontend:
                     include_completed = st.checkbox("Include Completed", value=True)
                     overdue_only = st.checkbox("Show Overdue Only", value=False)
 
-            # Apply filters
-            filtered_logs = self._apply_filters(
-                all_logs, selected_project, selected_user, status_filter, 
-                priority_filter, include_completed, overdue_only, search_query, search_in
-            )
+            # Apply filters - FIXED: Improved error handling
+            try:
+                filtered_logs = self._apply_filters(
+                    all_logs, selected_project, selected_user, status_filter, 
+                    priority_filter, include_completed, overdue_only, search_query, search_in
+                )
+            except Exception as e:
+                st.error(f"❌ Error applying filters: {str(e)}")
+                filtered_logs = all_logs
 
             st.subheader(f"📋 Showing {len(filtered_logs)} of {len(all_logs)} tasks")
             
@@ -274,7 +297,7 @@ class ProjectLogFrontend:
                             if st.checkbox("Confirm bulk deletion"):
                                 self._bulk_delete_tasks(filtered_logs)
                     with col3:
-                        priority_change = st.selectbox("Change Priority To", ["High", "Medium", "Low"])
+                        priority_change = st.selectbox("Change Priority To", ["High", "Medium", "Low","Critical"])
                         if st.button("🔄 Update Priority"):
                             self._bulk_update_priority(filtered_logs, priority_change)
 
@@ -284,23 +307,30 @@ class ProjectLogFrontend:
 
         else:
             # Non-admin view
-            user_logs = [log for log in all_logs if log.get("assigned_user") == current_user]
-            if search_query:
-                user_logs = self._search_logs(user_logs, search_query, search_in)
+            try:
+                user_logs = [log for log in all_logs if log.get("assigned_user") == current_user]
+                if search_query:
+                    user_logs = self._search_logs(user_logs, search_query, search_in)
+            except Exception as e:
+                st.error(f"❌ Error filtering user logs: {str(e)}")
+                user_logs = []
 
             st.subheader(f"📋 Your Assigned Tasks ({len(user_logs)})")
             
             # User task summary
             if len(user_logs) > 0:
-                user_stats = self._get_user_stats(user_logs)
-                col1, col2, col3, col4 = st.columns(4)
-                with col1: st.metric("Total", user_stats['total'])
-                with col2: st.metric("Completed", user_stats['completed'])
-                with col3: st.metric("Pending", user_stats['pending'])
-                with col4: st.metric("Overdue", user_stats['overdue'])
-                
-                st.divider()
-                self._render_user_task_cards(user_logs)
+                try:
+                    user_stats = self._get_user_stats(user_logs)
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1: st.metric("Total", user_stats['total'])
+                    with col2: st.metric("Completed", user_stats['completed'])
+                    with col3: st.metric("Pending", user_stats['pending'])
+                    with col4: st.metric("Overdue", user_stats['overdue'])
+                    
+                    st.divider()
+                    self._render_user_task_cards(user_logs)
+                except Exception as e:
+                    st.error(f"❌ Error rendering user stats: {str(e)}")
             else:
                 st.info("📭 You have no assigned tasks")
 
@@ -308,7 +338,12 @@ class ProjectLogFrontend:
         """Enhanced verification tab with batch processing"""
         st.subheader("✅ Pending Verification")
         
-        pending_logs = list(self.log_manager.logs.find({"status": "Pending Verification"}))
+        try:
+            pending_logs = list(self.log_manager.logs.find({"status": "Pending Verification"}))
+        except Exception as e:
+            st.error(f"❌ Error fetching pending logs: {str(e)}")
+            return
+            
         if len(pending_logs) == 0:
             st.success("🎉 No tasks pending verification.")
             return
@@ -348,20 +383,23 @@ class ProjectLogFrontend:
         st.markdown("### Individual Verification")
         
         # Enhanced verification table
-        df = pd.DataFrame([
-            {
-                "Project": log["project_name"],
-                "Member": log["assigned_user"],
-                "Stage": log["stage_name"],
-                "Substage": log["substage_name"],
-                "Completed At": self._format_datetime(log.get("completed_clicked_at")),
-                "Priority": log.get("priority", "Medium"),
-                "ID": str(log["_id"])
-            }
-            for log in pending_logs
-        ])
-        
-        st.dataframe(df.drop('ID', axis=1), use_container_width=True)
+        try:
+            df = pd.DataFrame([
+                {
+                    "Project": log["project_name"],
+                    "Member": log["assigned_user"],
+                    "Stage": log["stage_name"],
+                    "Substage": log["substage_name"],
+                    "Completed At": self._format_datetime(log.get("completed_clicked_at")),
+                    "Priority": log.get("priority", "Medium"),
+                    "ID": str(log["_id"])
+                }
+                for log in pending_logs
+            ])
+            
+            st.dataframe(df.drop('ID', axis=1), use_container_width=True)
+        except Exception as e:
+            st.error(f"❌ Error creating verification table: {str(e)}")
 
         # Individual verification controls
         for i, log in enumerate(pending_logs):
@@ -379,128 +417,174 @@ class ProjectLogFrontend:
                     st.markdown(priority_badge, unsafe_allow_html=True)
                 with col5:
                     if st.button("✅", key=f"verify_{log['_id']}", help="Verify this task"):
-                        self._verify_task_completion_with_timestamp(log)
-                        st.success(f"✅ Verified: {log['substage_name']}")
-                        st.rerun()
+                        try:
+                            self._verify_task_completion_with_timestamp(log)
+                            st.success(f"✅ Verified: {log['substage_name']}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Verification failed: {str(e)}")
                 
                 if i < len(pending_logs) - 1:
                     st.divider()
 
-    # Helper methods
+    # Helper methods - FIXED: Improved error handling and boolean logic
     def _apply_filters(self, logs, project, user, status, priority, include_completed, overdue_only, search_query, search_in):
-        """Apply all filters to logs"""
+        """Apply all filters to logs with improved error handling"""
+        if not logs:  # Handle empty logs list
+            return []
+            
         filtered_logs = []
         for log in logs:
-            # Project filter
-            if project != "All" and log["project_name"] != project:
-                continue
-            
-            # User filter
-            if user != "All Users" and log["assigned_user"] != user:
-                continue
-            
-            # Status filter
-            if log["status"] not in status:
-                continue
-            
-            # Priority filter
-            if log.get("priority", "Medium") not in priority:
-                continue
-            
-            # Completed filter
-            if not include_completed and log.get("is_completed", False):
-                continue
-            
-            # Overdue filter
-            if overdue_only and log.get("status") != "Overdue":
-                continue
-            
-            # Search filter
-            if search_query:
-                if not self._matches_search(log, search_query, search_in):
+            try:
+                # Project filter
+                if project != "All" and log.get("project_name") != project:
                     continue
-            
-            filtered_logs.append(log)
+                
+                # User filter
+                if user != "All Users" and log.get("assigned_user") != user:
+                    continue
+                
+                # Status filter - FIXED: Handle empty status filter
+                if status and log.get("status") not in status:
+                    continue
+                
+                # Priority filter - FIXED: Handle empty priority filter
+                if priority and log.get("priority", "Medium") not in priority:
+                    continue
+                
+                # Completed filter
+                if not include_completed and log.get("is_completed", False):
+                    continue
+                
+                # Overdue filter
+                if overdue_only and log.get("status") != "Overdue":
+                    continue
+                
+                # Search filter
+                if search_query and search_query.strip():
+                    if not self._matches_search(log, search_query, search_in):
+                        continue
+                
+                filtered_logs.append(log)
+                
+            except Exception as e:
+                # Log the error but continue processing
+                st.warning(f"⚠️ Error processing log {log.get('_id', 'unknown')}: {str(e)}")
+                continue
         
         return filtered_logs
 
+    def _search_logs(self, logs, query, search_in):
+        """Search logs with improved error handling"""
+        if not query or not query.strip():
+            return logs
+            
+        filtered_logs = []
+        for log in logs:
+            try:
+                if self._matches_search(log, query, search_in):
+                    filtered_logs.append(log)
+            except Exception as e:
+                # Continue processing even if one log fails
+                continue
+        return filtered_logs
+
     def _matches_search(self, log, query, search_in):
-        """Check if log matches search query"""
-        query = query.lower()
-        
-        if search_in == "All Fields":
-            searchable_text = f"{log.get('project_name', '')} {log.get('stage_name', '')} {log.get('substage_name', '')} {log.get('assigned_user', '')} {log.get('description', '')}".lower()
-            return query in searchable_text
-        elif search_in == "Project Name":
-            return query in log.get('project_name', '').lower()
-        elif search_in == "Task Name":
-            return query in log.get('substage_name', '').lower()
-        elif search_in == "User":
-            return query in log.get('assigned_user', '').lower()
-        
-        return False
+        """Check if log matches search query with improved error handling"""
+        try:
+            query = str(query).lower().strip()
+            if not query:
+                return True
+            
+            if search_in == "All Fields":
+                searchable_fields = [
+                    log.get('project_name', ''),
+                    log.get('stage_name', ''),
+                    log.get('substage_name', ''),
+                    log.get('assigned_user', ''),
+                    log.get('description', '')
+                ]
+                searchable_text = ' '.join(str(field) for field in searchable_fields).lower()
+                return query in searchable_text
+            elif search_in == "Project Name":
+                return query in str(log.get('project_name', '')).lower()
+            elif search_in == "Task Name":
+                return query in str(log.get('substage_name', '')).lower()
+            elif search_in == "User":
+                return query in str(log.get('assigned_user', '')).lower()
+            
+            return False
+        except Exception:
+            return False
 
     def _get_user_stats(self, user_logs):
-        """Get user statistics"""
-        total = len(user_logs)
-        completed = sum(1 for log in user_logs if log.get('is_completed', False))
-        overdue = sum(1 for log in user_logs if log.get('status') == 'Overdue')
-        pending = total - completed
-        
-        return {
-            'total': total,
-            'completed': completed,
-            'pending': pending,
-            'overdue': overdue
-        }
+        """Get user statistics with error handling"""
+        try:
+            total = len(user_logs)
+            completed = sum(1 for log in user_logs if log.get('is_completed', False))
+            overdue = sum(1 for log in user_logs if log.get('status') == 'Overdue')
+            pending = total - completed
+            
+            return {
+                'total': total,
+                'completed': completed,
+                'pending': pending,
+                'overdue': overdue
+            }
+        except Exception as e:
+            st.error(f"❌ Error calculating user stats: {str(e)}")
+            return {'total': 0, 'completed': 0, 'pending': 0, 'overdue': 0}
 
     def _render_user_task_cards(self, user_logs):
-        """Render user tasks as cards"""
+        """Render user tasks as cards with error handling"""
         for log in user_logs:
-            overdue_style = "border-left: 4px solid #f44336;" if log.get("status") == "Overdue" else "border-left: 4px solid #4caf50;"
-            priority = log.get('priority', 'Medium')
-            priority_colors = {"High": "#ffebee", "Medium": "#fff3e0", "Low": "#e8f5e8"}
-            priority_color = priority_colors.get(priority, "#f5f5f5")
-            
-            with st.container():
-                st.markdown(
-                    f"""
-                    <div style='{overdue_style} background-color:{priority_color}; padding:12px; border-radius:8px; margin:8px 0;'>
-                        <div style='display: flex; justify-content: space-between; align-items: center;'>
-                            <div>
-                                <strong style='font-size: 1.1em;'>{log['project_name']}</strong><br>
-                                <small style='color: #666;'>Stage: {log['stage_name']} → {log['substage_name']}</small><br>
-                                <small style='color: #888;'>Priority: {priority} | Deadline: {self._format_date(log.get('substage_deadline', log.get('stage_deadline')))}</small>
-                            </div>
-                            <div style='text-align: right;'>
-                                {format_status_badge(log['status'])}
+            try:
+                overdue_style = "border-left: 4px solid #f44336;" if log.get("status") == "Overdue" else "border-left: 4px solid #4caf50;"
+                priority = log.get('priority', 'Medium')
+                priority_colors = {"High": "#ffebee", "Medium": "#fff3e0", "Low": "#e8f5e8"}
+                priority_color = priority_colors.get(priority, "#f5f5f5")
+                
+                with st.container():
+                    st.markdown(
+                        f"""
+                        <div style='{overdue_style} background-color:{priority_color}; padding:12px; border-radius:8px; margin:8px 0;'>
+                            <div style='display: flex; justify-content: space-between; align-items: center;'>
+                                <div>
+                                    <strong style='font-size: 1.1em;'>{log.get('project_name', 'Unknown Project')}</strong><br>
+                                    <small style='color: #666;'>Stage: {log.get('stage_name', 'Unknown')} → {log.get('substage_name', 'Unknown')}</small><br>
+                                    <small style='color: #888;'>Priority: {priority} | Deadline: {self._format_date(log.get('substage_deadline', log.get('stage_deadline')))}</small>
+                                </div>
+                                <div style='text-align: right;'>
+                                    {format_status_badge(log.get('status', 'Unknown'))}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    """, 
-                    unsafe_allow_html=True
-                )
-                
-                # Action buttons
-                col1, col2, col3 = st.columns([1, 1, 2])
-                with col1:
-                    if log.get('status') == "Pending Verification":
-                        st.info("⏳ Awaiting Verification")
-                    elif not log.get('is_completed', False):
-                        if st.button("✅ Complete", key=f"complete_{log['_id']}"):
-                            self._mark_task_for_verification(str(log['_id']))
-                            st.success("⏳ Task marked for verification!")
-                            st.rerun()
-                    else:
-                        st.success("✅ Done")
-                
-                with col2:
-                    if st.button("📝 Details", key=f"details_{log['_id']}"):
-                        self._show_task_modal(log)
+                        """, 
+                        unsafe_allow_html=True
+                    )
+                    
+                    # Action buttons
+                    col1, col2, col3 = st.columns([1, 1, 2])
+                    with col1:
+                        if log.get('status') == "Pending Verification":
+                            st.info("⏳ Awaiting Verification")
+                        elif not log.get('is_completed', False):
+                            if st.button("✅ Complete", key=f"complete_{log['_id']}"):
+                                try:
+                                    self._mark_task_for_verification(str(log['_id']))
+                                    st.success("⏳ Task marked for verification!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Failed to complete task: {str(e)}")
+                        else:
+                            pass
+                    
+            except Exception as e:
+                st.error(f"❌ Error rendering task card: {str(e)}")
 
     def _format_date(self, date_str):
-        """Format date string for display"""
-        if not date_str or date_str == '1970-01-01 00:00:00':
+        """Format date string for display with improved error handling"""
+        if not date_str or date_str in ['1970-01-01 00:00:00', None, '']:
             return "Not Set"
         try:
             if isinstance(date_str, str):
@@ -511,24 +595,25 @@ class ProjectLogFrontend:
                         return dt.strftime('%Y-%m-%d')
                     except ValueError:
                         continue
-                return date_str
+                return str(date_str)
             elif isinstance(date_str, datetime):
                 return date_str.strftime('%Y-%m-%d')
             return str(date_str)
-        except:
+        except Exception:
             return "Invalid Date"
 
     def _format_datetime(self, dt):
-        """Format datetime for display"""
+        """Format datetime for display with improved error handling"""
         try:
-            if isinstance(dt, str):
+            if dt is None:
+                return "Not Recorded"
+            elif isinstance(dt, str):
                 return dt
             elif isinstance(dt, datetime):
                 return dt.strftime('%Y-%m-%d %H:%M')
-            return "Not Recorded"
-        except:
+            return str(dt)
+        except Exception:
             return "Invalid DateTime"
-
 
     def _cleanup_orphaned_logs(self):
         """Remove logs for non-existent projects"""
@@ -553,11 +638,18 @@ class ProjectLogFrontend:
 
     def _bulk_complete_tasks(self, tasks):
         """Mark multiple tasks as complete"""
+        completed_count = 0
         for task in tasks:
-            if not task.get('is_completed', False):
-                self._mark_task_for_verification(str(task['_id']))
-        st.success(f"✅ Marked {len(tasks)} tasks for verification!")
-        st.rerun()
+            try:
+                if not task.get('is_completed', False):
+                    self._mark_task_for_verification(str(task['_id']))
+                    completed_count += 1
+            except Exception as e:
+                st.error(f"❌ Failed to complete task {task.get('substage_name', 'Unknown')}: {str(e)}")
+        
+        if completed_count > 0:
+            st.success(f"✅ Marked {completed_count} tasks for verification!")
+            st.rerun()
 
     def _bulk_delete_tasks(self, tasks):
         """Delete multiple tasks"""
@@ -611,270 +703,294 @@ class ProjectLogFrontend:
         }
         """
 
-    # Keep existing methods
+    # Keep existing methods with improved error handling
     def _mark_task_for_verification(self, task_id):
-        self.log_manager.logs.update_one(
-            {"_id": ObjectId(task_id)},
-            {"$set": {
-                "status": "Pending Verification",
-                "verified": False,
-                "completed_clicked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "updated_at": datetime.now()
-            }}
-        )
+        """Mark task for verification with error handling"""
+        try:
+            self.log_manager.logs.update_one(
+                {"_id": ObjectId(task_id)},
+                {"$set": {
+                    "status": "Pending Verification",
+                    "verified": False,
+                    "completed_clicked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "updated_at": datetime.now()
+                }}
+            )
+        except Exception as e:
+            st.error(f"❌ Failed to mark task for verification: {str(e)}")
+            raise
 
     def _verify_task_completion_with_timestamp(self, log):
         """Verify all logs of the same substage or stage, then update stage completion."""
-        project_id = log["project_id"]
-        stage_key = log["stage_key"]
-        substage_id = log.get("substage_id")
-        current_time = datetime.now()
+        try:
+            project_id = log["project_id"]
+            stage_key = log["stage_key"]
+            substage_id = log.get("substage_id")
+            current_time = datetime.now()
 
-        if substage_id:
-            # ✅ Verify all logs for the same substage
-            self.log_manager.logs.update_many(
-                {"project_id": project_id, "stage_key": stage_key, "substage_id": substage_id},
-                {"$set": {
-                    "is_completed": True,
-                    "status": "Completed",
-                    "verified": True,
-                    "verified_at": current_time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "updated_at": current_time
-                }}
-            )
-        else:
-            # ✅ Stage-level log: verify all logs for this stage
-            self.log_manager.logs.update_many(
-                {"project_id": project_id, "stage_key": stage_key},
-                {"$set": {
-                    "is_completed": True,
-                    "status": "Completed",
-                    "verified": True,
-                    "verified_at": current_time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "updated_at": current_time
-                }}
-            )
+            if substage_id:
+                # ✅ Verify all logs for the same substage
+                self.log_manager.logs.update_many(
+                    {"project_id": project_id, "stage_key": stage_key, "substage_id": substage_id},
+                    {"$set": {
+                        "is_completed": True,
+                        "status": "Completed",
+                        "verified": True,
+                        "verified_at": current_time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "updated_at": current_time
+                    }}
+                )
+            else:
+                # ✅ Stage-level log: verify all logs for this stage
+                self.log_manager.logs.update_many(
+                    {"project_id": project_id, "stage_key": stage_key},
+                    {"$set": {
+                        "is_completed": True,
+                        "status": "Completed",
+                        "verified": True,
+                        "verified_at": current_time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "updated_at": current_time
+                    }}
+                )
 
-        # ✅ Recalculate and update stage completion
-        self.log_manager.update_stage_completion_status(project_id, stage_key)
+            # ✅ Recalculate and update stage completion
+            self.log_manager.update_stage_completion_status(project_id, stage_key)
+        except Exception as e:
+            st.error(f"❌ Failed to verify task completion: {str(e)}")
+            raise
 
     def _render_task_table(self, logs):
-        """Enhanced task table with better functionality"""
-        df = pd.DataFrame([
-            {
-                "Project": log["project_name"],
-                "Stage": log["stage_name"],
-                "Substage": log["substage_name"],
-                "User": log["assigned_user"],
-                "Status": log["status"],
-                "Priority": log.get("priority", "Medium"),
-                "Start Date": self._format_date(log.get("start_date")),
-                "Deadline": self._format_date(log.get("substage_deadline", log.get("stage_deadline"))),
-                "Completed": "✅ Yes" if log.get("is_completed") else "❌ No",
-                "Updated": self._format_datetime(log.get("updated_at")),
-                "ID": str(log["_id"])
-            }
-            for log in logs
-        ])
-        
-        # Enhanced grid configuration
-        gb = GridOptionsBuilder.from_dataframe(df.drop('ID', axis=1))
-        gb.configure_pagination(paginationAutoPageSize=True, paginationPageSize=20)
-        gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
-        gb.configure_selection('single', use_checkbox=True)
-        
-        # Custom cell renderers
-        gb.configure_column("Status", cellRenderer=self._status_cell_renderer(), width=120)
-        gb.configure_column("Priority", cellRenderer=self._priority_cell_renderer(), width=100)
-        gb.configure_column("Completed", width=100)
-        gb.configure_column("Project", width=200)
-        gb.configure_column("User", width=120)
-        
-        # Grid options
-        gridOptions = gb.build()
-        gridOptions['rowHeight'] = 40
-        gridOptions['headerHeight'] = 45
-        
-        grid_response = AgGrid(
-            df.drop('ID', axis=1), 
-            gridOptions=gridOptions, 
-            height=500, 
-            fit_columns_on_grid_load=True,
-            update_mode=GridUpdateMode.SELECTION_CHANGED,
-            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            allow_unsafe_jscode=True  # Required for custom cell renderers
-        )
-        
-        # Handle row selection for modal
-        if grid_response['selected_rows']:
-            try:
-                selected_idx = grid_response['selected_rows'][0]['_selectedRowNodeInfo']['nodeRowIndex']
-                if selected_idx < len(df):
-                    selected_log_id = df.iloc[selected_idx]['ID']
-                    selected_log = next((log for log in logs if str(log["_id"]) == selected_log_id), None)
-                    if selected_log:
-                        self._show_task_modal(selected_log)
-            except (KeyError, IndexError, TypeError):
-                st.warning("⚠️ Unable to load selected task details")
+        """Enhanced task table with better functionality and error handling"""
+        try:
+            if not logs:
+                st.info("📭 No tasks to display")
+                return
+                
+            df = pd.DataFrame([
+                {
+                    "Project": log.get("project_name", "Unknown"),
+                    "Stage": log.get("stage_name", "Unknown"),
+                    "Substage": log.get("substage_name", "Unknown"),
+                    "User": log.get("assigned_user", "Unknown"),
+                    "Status": log.get("status", "Unknown"),
+                    "Priority": log.get("priority", "Medium"),
+                    "Start Date": self._format_date(log.get("start_date")),
+                    "Deadline": self._format_date(log.get("substage_deadline", log.get("stage_deadline"))),
+                    "Completed": "✅ Yes" if log.get("is_completed") else "❌ No",
+                    "Updated": self._format_datetime(log.get("updated_at")),
+                    "ID": str(log["_id"])
+                }
+                for log in logs
+            ])
+            
+            # Enhanced grid configuration
+            gb = GridOptionsBuilder.from_dataframe(df.drop('ID', axis=1))
+            gb.configure_pagination(paginationAutoPageSize=True, paginationPageSize=20)
+            gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
+            gb.configure_selection('single', use_checkbox=True)
+            
+            # Custom cell renderers
+            gb.configure_column("Status", cellRenderer=self._status_cell_renderer(), width=120)
+            gb.configure_column("Priority", cellRenderer=self._priority_cell_renderer(), width=100)
+            gb.configure_column("Completed", width=100)
+            gb.configure_column("Project", width=200)
+            gb.configure_column("User", width=120)
+            
+            # Grid options
+            gridOptions = gb.build()
+            gridOptions['rowHeight'] = 40
+            gridOptions['headerHeight'] = 45
+            
+            grid_response = AgGrid(
+                df.drop('ID', axis=1), 
+                gridOptions=gridOptions, 
+                height=500, 
+                fit_columns_on_grid_load=True,
+                update_mode=GridUpdateMode.SELECTION_CHANGED,
+                data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+                allow_unsafe_jscode=True  # Required for custom cell renderers
+            )
+            
+            # Handle row selection for modal - FIXED: Improved error handling
+            if grid_response.get('selected_rows') and len(grid_response['selected_rows']) > 0:
+                try:
+                    selected_row = grid_response['selected_rows'][0]
+                    if '_selectedRowNodeInfo' in selected_row and 'nodeRowIndex' in selected_row['_selectedRowNodeInfo']:
+                        selected_idx = selected_row['_selectedRowNodeInfo']['nodeRowIndex']
+                        if 0 <= selected_idx < len(df):
+                            selected_log_id = df.iloc[selected_idx]['ID']
+                            selected_log = next((log for log in logs if str(log["_id"]) == selected_log_id), None)
+                            if selected_log:
+                                self._show_task_modal(selected_log)
+                except (KeyError, IndexError, TypeError) as e:
+                    st.warning("⚠️ Unable to load selected task details")
+                    
+        except Exception as e:
+            st.error(f"❌ Error rendering task table: {str(e)}")
 
     def _show_task_modal(self, log):
-        """Enhanced task modal with more functionality"""
-        modal = Modal(f"Task Details: {log['substage_name']}", key=f"task_modal_{log['_id']}", max_width=800)
-        
-        if modal.is_open():
-            with modal.container():
-                # Header with key info
-                col1, col2, col3 = st.columns([2, 1, 1])
-                with col1:
-                    st.markdown(f"### 📝 {log['substage_name']}")
-                    st.markdown(f"**Project:** {log['project_name']}")
-                    st.markdown(f"**Stage:** {log['stage_name']}")
-                with col2:
-                    st.markdown(f"**Status:**")
-                    st.markdown(format_status_badge(log['status']), unsafe_allow_html=True)
-                with col3:
-                    st.markdown(f"**Priority:**")
-                    st.markdown(format_priority_badge(log.get('priority', 'Medium')), unsafe_allow_html=True)
-                
-                st.divider()
-                
-                # Detailed information in tabs
-                tab1, tab2, tab3 = st.tabs(["📋 Details", "📅 Timeline", "⚡ Actions"])
-                
-                with tab1:
-                    col1, col2 = st.columns(2)
+        """Enhanced task modal with more functionality and error handling"""
+        try:
+            modal = Modal(f"Task Details: {log.get('substage_name', 'Unknown Task')}", 
+                         key=f"task_modal_{log['_id']}", max_width=800)
+            
+            if modal.is_open():
+                with modal.container():
+                    # Header with key info
+                    col1, col2, col3 = st.columns([2, 1, 1])
                     with col1:
-                        st.markdown("**Assignment Info:**")
-                        st.write(f"👤 **Assigned User:** {log['assigned_user']}")
-                        st.write(f"📅 **Start Date:** {self._format_date(log.get('start_date'))}")
-                        st.write(f"⏰ **Stage Deadline:** {self._format_date(log.get('stage_deadline'))}")
-                        st.write(f"⏰ **Substage Deadline:** {self._format_date(log.get('substage_deadline'))}")
-                    
+                        st.markdown(f"### 📝 {log.get('substage_name', 'Unknown Task')}")
+                        st.markdown(f"**Project:** {log.get('project_name', 'Unknown')}")
+                        st.markdown(f"**Stage:** {log.get('stage_name', 'Unknown')}")
                     with col2:
-                        st.markdown("**Progress Info:**")
-                        st.write(f"✅ **Completed:** {'Yes' if log.get('is_completed') else 'No'}")
-                        st.write(f"🔍 **Verified:** {'Yes' if log.get('verified') else 'No'}")
-                        if log.get('completed_at'):
-                            st.write(f"📅 **Completed At:** {self._format_datetime(log.get('completed_at'))}")
-                        if log.get('verified_at'):
-                            st.write(f"📅 **Verified At:** {log.get('verified_at')}")
+                        st.markdown(f"**Status:**")
+                        st.markdown(format_status_badge(log.get('status', 'Unknown')), unsafe_allow_html=True)
+                    with col3:
+                        st.markdown(f"**Priority:**")
+                        st.markdown(format_priority_badge(log.get('priority', 'Medium')), unsafe_allow_html=True)
                     
                     st.divider()
                     
-                    # Editable description
-                    current_desc = log.get('description', 'No description available')
-                    new_desc = st.text_area("📝 **Description:**", value=current_desc, height=120, key=f"desc_{log['_id']}")
+                    # Detailed information in tabs
+                    tab1, tab2, tab3 = st.tabs(["📋 Details", "📅 Timeline", "⚡ Actions"])
                     
-                    if new_desc != current_desc:
-                        if st.button("💾 Save Description", key=f"save_desc_{log['_id']}"):
-                            try:
-                                self.log_manager.logs.update_one(
-                                    {"_id": log["_id"]}, 
-                                    {"$set": {"description": new_desc, "updated_at": datetime.now()}}
-                                )
-                                st.success("✅ Description updated!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Failed to update description: {str(e)}")
-                
-                with tab2:
-                    st.markdown("**📅 Task Timeline:**")
-                    
-                    timeline_events = []
-                    if log.get('created_at'):
-                        timeline_events.append(("🆕 Created", log['created_at']))
-                    if log.get('completed_clicked_at'):
-                        timeline_events.append(("✅ Marked Complete", log['completed_clicked_at']))
-                    if log.get('verified_at'):
-                        timeline_events.append(("🔍 Verified", log['verified_at']))
-                    if log.get('updated_at'):
-                        timeline_events.append(("🔄 Last Updated", log['updated_at']))
-                    
-                    for event_name, event_time in timeline_events:
-                        formatted_time = self._format_datetime(event_time)
-                        st.write(f"**{event_name}:** {formatted_time}")
-                    
-                    # Progress visualization
-                    if log.get('start_date') and log.get('substage_deadline'):
-                        try:
-                            start_date = datetime.strptime(log['start_date'], '%Y-%m-%d')
-                            end_date = datetime.strptime(log['substage_deadline'], '%Y-%m-%d')
-                            current_date = datetime.now()
-                            
-                            total_days = (end_date - start_date).days
-                            elapsed_days = (current_date - start_date).days
-                            progress = min(max(elapsed_days / total_days if total_days > 0 else 0, 0), 1)
-                            
-                            st.markdown("**📊 Time Progress:**")
-                            st.progress(progress)
-                            st.write(f"Days elapsed: {elapsed_days} / {total_days}")
-                        except:
-                            st.write("Unable to calculate time progress")
-                
-                with tab3:
-                    st.markdown("**⚡ Available Actions:**")
-                    
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        if log.get('status') == "Pending Verification":
-                            if st.button("✅ Verify Completion", key=f"verify_modal_{log['_id']}", type="primary"):
-                                try:
-                                    self._verify_task_completion_with_timestamp(log)
-                                    st.success("✅ Task verified and marked completed!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"❌ Verification failed: {str(e)}")
-                        elif not log.get('is_completed', False):
-                            if st.button("✅ Mark Complete", key=f"complete_modal_{log['_id']}", type="primary"):
-                                try:
-                                    if self.log_manager.complete_task(str(log['_id'])):
-                                        st.success("✅ Task completed!")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ Failed to complete task")
-                                except Exception as e:
-                                    st.error(f"❌ Completion failed: {str(e)}")
-                        else:
-                            st.success("✅ Task Completed")
-                    
-                    with col2:
-                        # Priority change
-                        current_priority = log.get('priority', 'Medium')
-                        new_priority = st.selectbox(
-                            "Change Priority", 
-                            ["High", "Medium", "Low"], 
-                            index=["High", "Medium", "Low"].index(current_priority),
-                            key=f"priority_{log['_id']}"
-                        )
-                        if new_priority != current_priority:
-                            if st.button("🔄 Update Priority", key=f"update_priority_{log['_id']}"):
+                    with tab1:
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("**Assignment Info:**")
+                            st.write(f"👤 **Assigned User:** {log.get('assigned_user', 'Unknown')}")
+                            st.write(f"📅 **Start Date:** {self._format_date(log.get('start_date'))}")
+                            st.write(f"⏰ **Stage Deadline:** {self._format_date(log.get('stage_deadline'))}")
+                            st.write(f"⏰ **Substage Deadline:** {self._format_date(log.get('substage_deadline'))}")
+                        
+                        with col2:
+                            st.markdown("**Progress Info:**")
+                            st.write(f"✅ **Completed:** {'Yes' if log.get('is_completed') else 'No'}")
+                            st.write(f"🔍 **Verified:** {'Yes' if log.get('verified') else 'No'}")
+                            if log.get('completed_at'):
+                                st.write(f"📅 **Completed At:** {self._format_datetime(log.get('completed_at'))}")
+                            if log.get('verified_at'):
+                                st.write(f"📅 **Verified At:** {log.get('verified_at')}")
+                        
+                        st.divider()
+                        
+                        # Editable description
+                        current_desc = log.get('description', 'No description available')
+                        new_desc = st.text_area("📝 **Description:**", value=current_desc, height=120, key=f"desc_{log['_id']}")
+                        
+                        if new_desc != current_desc:
+                            if st.button("💾 Save Description", key=f"save_desc_{log['_id']}"):
                                 try:
                                     self.log_manager.logs.update_one(
                                         {"_id": log["_id"]}, 
-                                        {"$set": {"priority": new_priority, "updated_at": datetime.now()}}
+                                        {"$set": {"description": new_desc, "updated_at": datetime.now()}}
                                     )
-                                    st.success(f"🔄 Priority updated to {new_priority}!")
+                                    st.success("✅ Description updated!")
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"❌ Priority update failed: {str(e)}")
+                                    st.error(f"❌ Failed to update description: {str(e)}")
                     
-                    with col3:
-                        # Danger zone
-                        st.markdown("**⚠️ Danger Zone:**")
-                        if st.button("🗑️ Delete Task", key=f"delete_modal_{log['_id']}", type="secondary"):
-                            if st.checkbox("⚠️ Confirm deletion", key=f"confirm_delete_{log['_id']}"):
-                                try:
-                                    self.log_manager.logs.delete_one({"_id": log["_id"]})
-                                    st.warning("🗑️ Task deleted!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"❌ Deletion failed: {str(e)}")
-                
-                # Close modal button
-                st.divider()
-                if st.button("❌ Close", key=f"close_modal_{log['_id']}"):
-                    modal.close()
+                    with tab2:
+                        st.markdown("**📅 Task Timeline:**")
+                        
+                        timeline_events = []
+                        if log.get('created_at'):
+                            timeline_events.append(("🆕 Created", log['created_at']))
+                        if log.get('completed_clicked_at'):
+                            timeline_events.append(("✅ Marked Complete", log['completed_clicked_at']))
+                        if log.get('verified_at'):
+                            timeline_events.append(("🔍 Verified", log['verified_at']))
+                        if log.get('updated_at'):
+                            timeline_events.append(("🔄 Last Updated", log['updated_at']))
+                        
+                        for event_name, event_time in timeline_events:
+                            formatted_time = self._format_datetime(event_time)
+                            st.write(f"**{event_name}:** {formatted_time}")
+                        
+                        # Progress visualization
+                        if log.get('start_date') and log.get('substage_deadline'):
+                            try:
+                                start_date = datetime.strptime(log['start_date'], '%Y-%m-%d')
+                                end_date = datetime.strptime(log['substage_deadline'], '%Y-%m-%d')
+                                current_date = datetime.now()
+                                
+                                total_days = (end_date - start_date).days
+                                elapsed_days = (current_date - start_date).days
+                                progress = min(max(elapsed_days / total_days if total_days > 0 else 0, 0), 1)
+                                
+                                st.markdown("**📊 Time Progress:**")
+                                st.progress(progress)
+                                st.write(f"Days elapsed: {elapsed_days} / {total_days}")
+                            except Exception:
+                                st.write("Unable to calculate time progress")
+                    
+                    with tab3:
+                        st.markdown("**⚡ Available Actions:**")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            if log.get('status') == "Pending Verification":
+                                if st.button("✅ Verify Completion", key=f"verify_modal_{log['_id']}", type="primary"):
+                                    try:
+                                        self._verify_task_completion_with_timestamp(log)
+                                        st.success("✅ Task verified and marked completed!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Verification failed: {str(e)}")
+                            elif not log.get('is_completed', False):
+                                if st.button("✅ Mark Complete", key=f"complete_modal_{log['_id']}", type="primary"):
+                                    try:
+                                        if self.log_manager.complete_task(str(log['_id'])):
+                                            st.success("✅ Task completed!")
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ Failed to complete task")
+                                    except Exception as e:
+                                        st.error(f"❌ Completion failed: {str(e)}")
+                            else:
+                                st.success("✅ Task Completed")
+                        
+                        with col2:
+                            # Priority change
+                            current_priority = log.get('priority', 'Medium')
+                            new_priority = st.selectbox(
+                                "Change Priority", 
+                                ["High", "Medium", "Low","Critical"], 
+                                index=["High", "Medium", "Low","Critical"].index(current_priority),
+                                key=f"priority_{log['_id']}"
+                            )
+                            if new_priority != current_priority:
+                                if st.button("🔄 Update Priority", key=f"update_priority_{log['_id']}"):
+                                    try:
+                                        self.log_manager.logs.update_one(
+                                            {"_id": log["_id"]}, 
+                                            {"$set": {"priority": new_priority, "updated_at": datetime.now()}}
+                                        )
+                                        st.success(f"🔄 Priority updated to {new_priority}!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Priority update failed: {str(e)}")
+                        
+                        with col3:
+                            # Danger zone
+                            st.markdown("**⚠️ Danger Zone:**")
+                            if st.button("🗑️ Delete Task", key=f"delete_modal_{log['_id']}", type="secondary"):
+                                if st.checkbox("⚠️ Confirm deletion", key=f"confirm_delete_{log['_id']}"):
+                                    try:
+                                        self.log_manager.logs.delete_one({"_id": log["_id"]})
+                                        st.warning("🗑️ Task deleted!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Deletion failed: {str(e)}")
+                    
+                    # Close modal button
+                    st.divider()
+                    if st.button("❌ Close", key=f"close_modal_{log['_id']}"):
+                        modal.close()
+                        
+        except Exception as e:
+            st.error(f"❌ Error displaying task modal: {str(e)}")
 
     def run(self):
         """Main application runner with enhanced error handling"""
@@ -889,11 +1005,14 @@ class ProjectLogFrontend:
             user_role = st.session_state.get("role", "user")
             current_user = st.session_state.get("username", "Guest")
             
-            
             if user_role in ["admin", "manager"]:
                 # Admin/Manager interface
-                pending_count = self.log_manager.logs.count_documents({"status": "Pending Verification"})
-                verification_tab_label = f"✅ Verification ({pending_count})" if pending_count > 0 else "✅ Verification"
+                try:
+                    pending_count = self.log_manager.logs.count_documents({"status": "Pending Verification"})
+                    verification_tab_label = f"✅ Verification ({pending_count})" if pending_count > 0 else "✅ Verification"
+                except Exception as e:
+                    st.warning(f"⚠️ Could not fetch pending count: {str(e)}")
+                    verification_tab_label = "✅ Verification"
 
                 tab_dashboard, tab_user_logs, tab_verification = st.tabs([
                     "📊 Dashboard", "👤 Task Management", verification_tab_label
