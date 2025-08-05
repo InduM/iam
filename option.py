@@ -17,7 +17,7 @@ def load_page(module_name):
     module = importlib.import_module(f"pages2.{module_name}")
     module.run()
 
-st.set_page_config(layout="centered")
+st.set_page_config(layout="wide")
 
 
 def get_base64(bin_file):

@@ -33,7 +33,7 @@ class ProjectLogManager:
             st.error(f"❌ Database connection issue: {str(e)}")
             return False
 
-    def extract_and_create_logs(self):
+    def extract_and_create_logs(self,project_name = None):
         """Extract assignments from projects and create logs for substages and stage-level tasks"""
         try:
             projects = list(self.projects.find({}))
@@ -273,6 +273,15 @@ class ProjectLogManager:
         except Exception as e:
             st.error(f"Error verifying task: {str(e)}")
             return False
+
+    def remove_project_from_logs(self, project_name):
+        """Delete logs for a given project from MongoDB and return count."""
+        try:
+            result = self.logs.delete_many({"project_name": project_name})
+            return result.deleted_count
+        except Exception as e:
+            st.error(f"Error deleting project logs: {e}")
+            return 0
 
     def update_stage_completion_status(self, project_id: ObjectId, stage_key: str):
         """Check if all logs in a stage are completed, then update project stage status."""

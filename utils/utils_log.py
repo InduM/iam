@@ -184,7 +184,7 @@ def format_status_badge(status: str) -> str:
         "No Deadline Set": "⚪",
         "Error": "❌"
     }
-    return f"{colors.get(status, '⚪')} {status}"
+    return f"{colors.get(status, '⚪')}{status}"
 
 def format_priority_badge(priority: str) -> str:
     """Format priority with colored badges"""

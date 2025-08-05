@@ -345,7 +345,7 @@ class ProjectLogFrontend:
             return
             
         if len(pending_logs) == 0:
-            st.success("🎉 No tasks pending verification.")
+            st.success("No tasks pending verification.")
             return
 
         # Verification stats
@@ -543,7 +543,8 @@ class ProjectLogFrontend:
                 priority = log.get('priority', 'Medium')
                 priority_colors = {"High": "#ffebee", "Medium": "#fff3e0", "Low": "#e8f5e8"}
                 priority_color = priority_colors.get(priority, "#f5f5f5")
-                
+                deadline = log.get('substage_deadline') or log.get('stage_deadline') or 'N/A'
+
                 with st.container():
                     st.markdown(
                         f"""
@@ -552,8 +553,8 @@ class ProjectLogFrontend:
                                 <div>
                                     <strong style='font-size: 1.1em;'>{log.get('project_name', 'Unknown Project')}</strong><br>
                                     <small style='color: #666;'>Stage: {log.get('stage_name', 'Unknown')} → {log.get('substage_name', 'Unknown')}</small><br>
-                                    <small style='color: #888;'>Priority: {priority} | Deadline: {self._format_date(log.get('substage_deadline', log.get('stage_deadline')))}</small>
-                                </div>
+                                    <small style='color: #888;'>Priority: {priority} | Deadline: {self._format_date(deadline)}</small>
+                                    </div>
                                 <div style='text-align: right;'>
                                     {format_status_badge(log.get('status', 'Unknown'))}
                                 </div>
@@ -562,7 +563,6 @@ class ProjectLogFrontend:
                         """, 
                         unsafe_allow_html=True
                     )
-                    
                     # Action buttons
                     col1, col2, col3 = st.columns([1, 1, 2])
                     with col1:
@@ -1052,7 +1052,6 @@ class ProjectLogFrontend:
 
 
 def run():
-    """Application entry point"""
     try:
         app = ProjectLogFrontend()
         app.run()

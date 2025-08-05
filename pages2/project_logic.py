@@ -197,6 +197,11 @@ def handle_save_project(pid, project, name, client, description, start, due, ori
             
             # Display success messages
             display_success_messages(success_messages)
+
+            from backend.log_backend import ProjectLogManager
+            log_manager = ProjectLogManager()
+            log_manager.extract_and_create_logs()
+
             
             st.session_state.view = "dashboard"
             st.rerun()
