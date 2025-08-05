@@ -128,37 +128,29 @@ class ProjectLogFrontend:
                 st.error(f"❌ Error loading user chart: {str(e)}")
 
     def _render_recent_activity(self):
-        """Enhanced recent activity with better formatting"""
         st.subheader("📈 Recent Activity")
-        
-        # Activity filters
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            activity_filter = st.selectbox("Activity Type", 
+            activity_filter = st.selectbox("Activity Type",
                                          ["All Activities", "Recent Completions", "Recent Updates", "Overdue Tasks"])
         with col2:
             days_back = st.slider("Days Back", 1, 30, 7)
         with col3:
             limit = st.slider("Max Results", 5, 50, 20)
-        
-        # Build query based on filters
+
         query = {}
         if activity_filter == "Recent Completions":
             query["is_completed"] = True
         elif activity_filter == "Overdue Tasks":
             query["status"] = "Overdue"
-        
-        # Date filter
+
         cutoff_date = datetime.now() - timedelta(days=days_back)
         query["updated_at"] = {"$gte": cutoff_date}
-        
         recent_logs = list(self.log_manager.logs.find(query).sort("updated_at", -1).limit(limit))
-        
         if len(recent_logs) == 0:
             st.info(f"📭 No {activity_filter.lower()} found in the last {days_back} days")
             return
 
-        # Enhanced data presentation
         df = pd.DataFrame([
             {
                 "Project": log["project_name"],
@@ -174,28 +166,29 @@ class ProjectLogFrontend:
             for log in recent_logs
         ])
 
-        # Enhanced AgGrid configuration
         gb = GridOptionsBuilder.from_dataframe(df.drop('ID', axis=1))
         gb.configure_pagination(paginationAutoPageSize=True)
         gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
         gb.configure_selection('single', use_checkbox=True)
         gb.configure_column("Status", cellRenderer=self._status_cell_renderer())
         gb.configure_column("Priority", cellRenderer=self._priority_cell_renderer())
-        
         gridOptions = gb.build()
         grid_response = AgGrid(
-            df.drop('ID', axis=1), 
-            gridOptions=gridOptions, 
-            height=400, 
+            df.drop('ID', axis=1),
+            gridOptions=gridOptions,
+            height=400,
             fit_columns_on_grid_load=True,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED
         )
-        
-        # Handle row selection - FIXED: Added proper error handling for DataFrame selection
-        if grid_response.get('selected_rows') and len(grid_response['selected_rows']) > 0:
+
+        selected_rows = grid_response.get('selected_rows', [])
+        if isinstance(selected_rows, pd.DataFrame):
+            selected_rows = selected_rows.to_dict('records')
+
+        if selected_rows and len(selected_rows) > 0:
             try:
-                selected_row = grid_response['selected_rows'][0]
+                selected_row = selected_rows[0]
                 if '_selectedRowNodeInfo' in selected_row and 'nodeRowIndex' in selected_row['_selectedRowNodeInfo']:
                     selected_idx = selected_row['_selectedRowNodeInfo']['nodeRowIndex']
                     if 0 <= selected_idx < len(df):
@@ -203,7 +196,7 @@ class ProjectLogFrontend:
                         selected_log = next((log for log in recent_logs if str(log["_id"]) == selected_log_id), None)
                         if selected_log:
                             self._show_task_modal(selected_log)
-            except (KeyError, IndexError, TypeError) as e:
+            except (KeyError, IndexError, TypeError):
                 st.warning("⚠️ Unable to load selected task details")
 
     def render_user_logs_tab(self, is_admin=True):
@@ -808,13 +801,17 @@ class ProjectLogFrontend:
                 fit_columns_on_grid_load=True,
                 update_mode=GridUpdateMode.SELECTION_CHANGED,
                 data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-                allow_unsafe_jscode=True  # Required for custom cell renderers
+                allow_unsafe_jscode=True
             )
             
-            # Handle row selection for modal - FIXED: Improved error handling
-            if grid_response.get('selected_rows') and len(grid_response['selected_rows']) > 0:
+            # ✅ Fix applied here
+            selected_rows = grid_response.get('selected_rows', [])
+            if isinstance(selected_rows, pd.DataFrame):
+                selected_rows = selected_rows.to_dict('records')
+
+            if selected_rows and len(selected_rows) > 0:
                 try:
-                    selected_row = grid_response['selected_rows'][0]
+                    selected_row = selected_rows[0]
                     if '_selectedRowNodeInfo' in selected_row and 'nodeRowIndex' in selected_row['_selectedRowNodeInfo']:
                         selected_idx = selected_row['_selectedRowNodeInfo']['nodeRowIndex']
                         if 0 <= selected_idx < len(df):
@@ -822,7 +819,7 @@ class ProjectLogFrontend:
                             selected_log = next((log for log in logs if str(log["_id"]) == selected_log_id), None)
                             if selected_log:
                                 self._show_task_modal(selected_log)
-                except (KeyError, IndexError, TypeError) as e:
+                except (KeyError, IndexError, TypeError):
                     st.warning("⚠️ Unable to load selected task details")
                     
         except Exception as e:
