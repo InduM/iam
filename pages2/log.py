@@ -776,11 +776,11 @@ class ProjectLogFrontend:
                 for log in logs
             ])
             
-            # Enhanced grid configuration
+            # Enhanced grid configuration with multiple selection
             gb = GridOptionsBuilder.from_dataframe(df.drop('ID', axis=1))
             gb.configure_pagination(paginationAutoPageSize=True, paginationPageSize=20)
             gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
-            gb.configure_selection('single', use_checkbox=True)
+            gb.configure_selection('multiple', use_checkbox=True, groupSelectsChildren=True, groupSelectsFiltered=True)
             
             # Custom cell renderers
             gb.configure_column("Status", cellRenderer=self._status_cell_renderer(), width=120)
@@ -804,26 +804,183 @@ class ProjectLogFrontend:
                 allow_unsafe_jscode=True
             )
             
-            # ✅ Fix applied here
+            # Handle checked/selected rows
             selected_rows = grid_response.get('selected_rows', [])
-            if isinstance(selected_rows, pd.DataFrame):
+            if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
                 selected_rows = selected_rows.to_dict('records')
+            elif not isinstance(selected_rows, list):
+                selected_rows = []
 
             if selected_rows and len(selected_rows) > 0:
                 try:
-                    selected_row = selected_rows[0]
-                    if '_selectedRowNodeInfo' in selected_row and 'nodeRowIndex' in selected_row['_selectedRowNodeInfo']:
-                        selected_idx = selected_row['_selectedRowNodeInfo']['nodeRowIndex']
-                        if 0 <= selected_idx < len(df):
-                            selected_log_id = df.iloc[selected_idx]['ID']
-                            selected_log = next((log for log in logs if str(log["_id"]) == selected_log_id), None)
-                            if selected_log:
-                                self._show_task_modal(selected_log)
-                except (KeyError, IndexError, TypeError):
-                    st.warning("⚠️ Unable to load selected task details")
+                    # Get the selected task IDs and logs
+                    selected_task_data = self._get_selected_tasks_data(selected_rows, df, logs)
                     
+                    if selected_task_data:
+                        # Show selected tasks actions
+                        with st.container():
+                            st.info(f"🎯 Selected {len(selected_task_data)} task(s)")
+                            
+                            # Show selected tasks summary
+                            with st.expander(f"📋 Selected Tasks ({len(selected_task_data)})", expanded=False):
+                                for task_data in selected_task_data:
+                                    st.write(f"• **{task_data['log'].get('project_name', 'Unknown')}** - {task_data['log'].get('substage_name', 'Unknown')} (Priority: {task_data['log'].get('priority', 'Medium')})")
+                            
+                            # Bulk actions for selected rows only
+                            col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+                            
+                            with col1:
+                                # Priority update for checked rows only
+                                new_priority = st.selectbox(
+                                    "Change Priority for Selected", 
+                                    ["High", "Medium", "Low", "Critical"], 
+                                    index=1,  # Default to Medium
+                                    key="bulk_priority_select"
+                                )
+                            
+                            with col2:
+                                if st.button("🔄 Update Priority", key="update_selected_priority", type="primary"):
+                                    updated_count = self._update_selected_tasks_priority(selected_task_data, new_priority)
+                                    if updated_count > 0:
+                                        st.success(f"🔄 Priority updated to {new_priority} for {updated_count} selected task(s)!")
+                                        st.rerun()
+                                    else:
+                                        st.warning("⚠️ No tasks were updated")
+                            
+                            with col3:
+                                # Complete selected tasks
+                                if st.button("✅ Complete Selected", key="complete_selected_tasks", type="secondary"):
+                                    completed_count = self._complete_selected_tasks(selected_task_data)
+                                    if completed_count > 0:
+                                        st.success(f"✅ Marked {completed_count} selected task(s) for verification!")
+                                        st.rerun()
+                            
+                            with col4:
+                                # Verify selected tasks (if applicable)
+                                pending_tasks = [task for task in selected_task_data if task['log'].get('status') == 'Pending Verification']
+                                if pending_tasks:
+                                    if st.button(f"✅ Verify Selected ({len(pending_tasks)})", key="verify_selected_tasks", type="secondary"):
+                                        verified_count = self._verify_selected_tasks(pending_tasks)
+                                        if verified_count > 0:
+                                            st.success(f"✅ Verified {verified_count} selected task(s)!")
+                                            st.rerun()
+                    
+                except Exception as e:
+                    st.warning(f"⚠️ Unable to load selected task details: {str(e)}")
+            else:
+                st.info("ℹ️ Check the boxes next to rows to perform bulk actions on selected tasks")
+                        
         except Exception as e:
             st.error(f"❌ Error rendering task table: {str(e)}")
+
+    def _update_selected_tasks_priority(self, selected_task_data, new_priority):
+        """Update priority for only the selected/checked tasks"""
+        try:
+            if not selected_task_data:
+                return 0
+            
+            # Extract ObjectIds from selected tasks
+            task_ids = [ObjectId(task_data['task_id']) for task_data in selected_task_data]
+            
+            # Update only the selected tasks
+            result = self.log_manager.logs.update_many(
+                {"_id": {"$in": task_ids}},  # Only update tasks with these specific IDs
+                {"$set": {
+                    "priority": new_priority, 
+                    "updated_at": datetime.now()
+                }}
+            )
+            
+            return result.modified_count
+            
+        except Exception as e:
+            st.error(f"❌ Failed to update priority for selected tasks: {str(e)}")
+            return 0
+
+
+    def _complete_selected_tasks(self, selected_task_data):
+        """Mark selected tasks as complete"""
+        try:
+            completed_count = 0
+            
+            for task_data in selected_task_data:
+                try:
+                    task_log = task_data['log']
+                    if not task_log.get('is_completed', False):
+                        self._mark_task_for_verification(task_data['task_id'])
+                        completed_count += 1
+                except Exception as e:
+                    st.warning(f"⚠️ Failed to complete task {task_data['log'].get('substage_name', 'Unknown')}: {str(e)}")
+                    continue
+            
+            return completed_count
+            
+        except Exception as e:
+            st.error(f"❌ Failed to complete selected tasks: {str(e)}")
+            return 0
+    def _verify_selected_tasks(self, selected_task_data):
+        """Verify selected tasks that are pending verification"""
+        try:
+            verified_count = 0
+            
+            for task_data in selected_task_data:
+                try:
+                    task_log = task_data['log']
+                    if task_log.get('status') == 'Pending Verification':
+                        self._verify_task_completion_with_timestamp(task_log)
+                        verified_count += 1
+                except Exception as e:
+                    st.warning(f"⚠️ Failed to verify task {task_data['log'].get('substage_name', 'Unknown')}: {str(e)}")
+                    continue
+            
+            return verified_count
+            
+        except Exception as e:
+            st.error(f"❌ Failed to verify selected tasks: {str(e)}")
+            return 0
+
+
+    def _get_selected_tasks_data(self, selected_rows, df, logs):
+        """Extract task data for selected rows"""
+        try:
+            selected_task_data = []
+            
+            for selected_row in selected_rows:
+                try:
+                    # Find the corresponding row in the dataframe
+                    # Match by multiple fields to ensure accuracy
+                    matching_rows = df[
+                        (df['Project'] == selected_row.get('Project', '')) &
+                        (df['Stage'] == selected_row.get('Stage', '')) &
+                        (df['Substage'] == selected_row.get('Substage', '')) &
+                        (df['User'] == selected_row.get('User', ''))
+                    ]
+                    
+                    if not matching_rows.empty:
+                        # Get the first match (should be unique)
+                        matched_row = matching_rows.iloc[0]
+                        task_id = matched_row['ID']
+                        
+                        # Find the corresponding log
+                        matching_log = next((log for log in logs if str(log["_id"]) == task_id), None)
+                        
+                        if matching_log:
+                            selected_task_data.append({
+                                'task_id': task_id,
+                                'log': matching_log
+                            })
+                            
+                except Exception as e:
+                    st.warning(f"⚠️ Error processing selected row: {str(e)}")
+                    continue
+            
+            return selected_task_data
+            
+        except Exception as e:
+            st.error(f"❌ Error extracting selected tasks: {str(e)}")
+            return []
+
+
 
     def _show_task_modal(self, log):
         """Enhanced task modal with more functionality and error handling"""
