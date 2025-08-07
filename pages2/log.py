@@ -541,7 +541,7 @@ class ProjectLogFrontend:
             try:
                 overdue_style = "border-left: 4px solid #f44336;" if log.get("status") == "Overdue" else "border-left: 4px solid #4caf50;"
                 priority = log.get('priority', 'Medium')
-                priority_colors = {"High": "#ffebee", "Medium": "#fff3e0", "Low": "#D3D3D3","Critical":"#FF0000"}
+                priority_colors = {"High": "#ffebee", "Medium": "#fff3e0", "Low": "#F9F9F9","Critical":"#FF0000"}
                 priority_color = priority_colors.get(priority, "#f5f5f5")
                 deadline = log.get('substage_deadline') or log.get('stage_deadline') or 'N/A'
 
@@ -697,7 +697,7 @@ class ProjectLogFrontend:
             const colors = {
                 'High': '#FF5722',
                 'Medium': '#FF9800',
-                'Low': '#4CAF50'
+                'Low': '#F9F9F9'
                 "Critical": '#FF0000'
             };
             return '<span style="background-color:' + (colors[priority] || '#666') + '; color:white; padding:2px 8px; border-radius:12px; font-size:0.8em;">' + priority + '</span>';
