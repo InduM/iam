@@ -14,12 +14,12 @@ class ProjectLogFrontend:
     def __init__(self):
         self.log_manager = ProjectLogManager()
 
-    def render_toolbar(self, logs):
+    def render_toolbar(self, logs, context="default"):
         """Enhanced toolbar with additional functionality"""
         col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
         
         with col1:
-            if st.button("🔄 Refresh", help="Refresh the current view"):
+            if st.button("🔄 Refresh", key=f"toolbar_refresh_btn_{context}", help="Refresh the current view"):
                 st.rerun()
       
     def render_dashboard_tab(self):
@@ -27,7 +27,7 @@ class ProjectLogFrontend:
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            if st.button("🔄 Extract Logs", type="primary", help="Extract assignments from projects"):
+            if st.button("🔄 Extract Logs", key="dashboard_extract_logs_btn", type="primary", help="Extract assignments from projects"):
                 with st.spinner("Extracting assignments from projects..."):
                     try:
                         logs_created = self.log_manager.extract_and_create_logs()
@@ -36,8 +36,8 @@ class ProjectLogFrontend:
                         st.error(f"❌ Error extracting logs: {str(e)}")
         
         with col2:
-            if st.button("🧹 Clean Database", type="secondary", help="Remove orphaned logs"):
-                if st.checkbox("⚠️ Confirm cleanup", help="This will remove logs for non-existent projects"):
+            if st.button("🧹 Clean Database", key="dashboard_clean_db_btn", type="secondary", help="Remove orphaned logs"):
+                if st.checkbox("⚠️ Confirm cleanup", key="dashboard_confirm_cleanup", help="This will remove logs for non-existent projects"):
                     with st.spinner("Cleaning database..."):
                         cleaned = self._cleanup_orphaned_logs()
                         st.success(f"🧹 Cleaned {cleaned} orphaned logs")
@@ -131,12 +131,12 @@ class ProjectLogFrontend:
         st.subheader("📈 Recent Activity")
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            activity_filter = st.selectbox("Activity Type",
-                                         ["All Activities", "Recent Completions", "Recent Updates", "Overdue Tasks"])
+            activity_filter = st.selectbox("Activity Type", key="recent_activity_filter",
+                                        options=["All Activities", "Recent Completions", "Recent Updates", "Overdue Tasks"])
         with col2:
-            days_back = st.slider("Days Back", 1, 30, 7)
+            days_back = st.slider("Days Back", key="recent_activity_days", min_value=1, max_value=30, value=7)
         with col3:
-            limit = st.slider("Max Results", 5, 50, 20)
+            limit = st.slider("Max Results", key="recent_activity_limit", min_value=5, max_value=50, value=20)
 
         query = {}
         if activity_filter == "Recent Completions":
@@ -179,7 +179,8 @@ class ProjectLogFrontend:
             height=400,
             fit_columns_on_grid_load=True,
             update_mode=GridUpdateMode.SELECTION_CHANGED,
-            data_return_mode=DataReturnMode.FILTERED_AND_SORTED
+            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+            key="recent_activity_aggrid"  # Added unique key
         )
 
         selected_rows = grid_response.get('selected_rows', [])
@@ -198,7 +199,7 @@ class ProjectLogFrontend:
                             self._show_task_modal(selected_log)
             except (KeyError, IndexError, TypeError):
                 st.warning("⚠️ Unable to load selected task details")
-
+    
     def render_user_logs_tab(self, is_admin=True):
         """Enhanced user logs with better filtering and bulk operations"""
         try:
@@ -211,15 +212,19 @@ class ProjectLogFrontend:
             st.warning("📭 No logs available")
             return
 
-        self.render_toolbar(all_logs)
+        # Pass context to make toolbar keys unique
+        toolbar_context = "admin" if is_admin else "user"
+        self.render_toolbar(all_logs, context=toolbar_context)
         current_user = st.session_state.get("username", "Unknown User")
         
         # Enhanced search
         col1, col2 = st.columns([3, 1])
         with col1:
-            search_query = st.text_input("🔍 Search Tasks", placeholder="Search by project, task, user...")
+            search_key = "admin_logs_search" if is_admin else "user_logs_search"
+            search_query = st.text_input("🔍 Search Tasks", key=search_key, placeholder="Search by project, task, user...")
         with col2:
-            search_in = st.selectbox("Search In", ["All Fields", "Project Name", "Task Name", "User"])
+            search_in_key = "admin_logs_search_in" if is_admin else "user_logs_search_in"
+            search_in = st.selectbox("Search In", key=search_in_key, options=["All Fields", "Project Name", "Task Name", "User"])
 
         if is_admin:
             with st.expander("🔍 Advanced Filters", expanded=False):
@@ -229,7 +234,7 @@ class ProjectLogFrontend:
                     try:
                         projects = self.log_manager.get_projects()
                         project_names = ["All"] + [p['name'] for p in projects]
-                        selected_project = st.selectbox("Project", project_names)
+                        selected_project = st.selectbox("Project", key="admin_project_filter", options=project_names)
                     except Exception as e:
                         st.error(f"❌ Error loading projects: {str(e)}")
                         selected_project = "All"
@@ -237,14 +242,15 @@ class ProjectLogFrontend:
                 with col2:
                     try:
                         users = ["All Users"] + self.log_manager.get_all_users()
-                        selected_user = st.selectbox("User", users)
+                        selected_user = st.selectbox("User", key="admin_user_filter", options=users)
                     except Exception as e:
                         st.error(f"❌ Error loading users: {str(e)}")
                         selected_user = "All Users"
                 
                 with col3:
                     status_filter = st.multiselect(
-                        "Status", ["Completed", "Pending Verification", "Overdue", "In Progress"],
+                        "Status", key="admin_status_filter",
+                        options=["Completed", "Pending Verification", "Overdue", "In Progress"],
                         default=["Completed", "Pending Verification", "Overdue", "In Progress"]
                     )
 
@@ -252,18 +258,19 @@ class ProjectLogFrontend:
                 
                 with col4:
                     priority_filter = st.multiselect(
-                        "Priority", ["High", "Medium", "Low","Critical"],
+                        "Priority", key="admin_priority_filter",
+                        options=["High", "Medium", "Low","Critical"],
                         default=["High", "Medium", "Low","Critical"]
                     )
                 
                 with col5:
                     # Date range filter
-                    date_filter = st.date_input("Deadline Range", value=None, help="Filter by deadline range")
+                    date_filter = st.date_input("Deadline Range", key="admin_date_filter", value=None, help="Filter by deadline range")
                 
                 with col6:
                     # Additional filters
-                    include_completed = st.checkbox("Include Completed", value=True)
-                    overdue_only = st.checkbox("Show Overdue Only", value=False)
+                    include_completed = st.checkbox("Include Completed", key="admin_include_completed", value=True)
+                    overdue_only = st.checkbox("Show Overdue Only", key="admin_overdue_only", value=False)
 
             # Apply filters - FIXED: Improved error handling
             try:
@@ -282,19 +289,19 @@ class ProjectLogFrontend:
                 with st.expander("⚡ Bulk Operations", expanded=False):
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        if st.button("✅ Mark All Complete"):
-                            if st.checkbox("Confirm bulk completion"):
+                        if st.button("✅ Mark All Complete", key="admin_bulk_complete_all"):
+                            if st.checkbox("Confirm bulk completion", key="admin_bulk_complete_confirm"):
                                 self._bulk_complete_tasks(filtered_logs)
                     with col2:
-                        if st.button("🗑️ Delete Selected"):
-                            if st.checkbox("Confirm bulk deletion"):
+                        if st.button("🗑️ Delete Selected", key="admin_bulk_delete_all"):
+                            if st.checkbox("Confirm bulk deletion", key="admin_bulk_delete_confirm"):
                                 self._bulk_delete_tasks(filtered_logs)
                     with col3:
-                        priority_change = st.selectbox("Change Priority To", ["High", "Medium", "Low","Critical"])
-                        if st.button("🔄 Update Priority"):
+                        priority_change = st.selectbox("Change Priority To", key="admin_bulk_priority_change", options=["High", "Medium", "Low","Critical"])
+                        if st.button("🔄 Update Priority", key="admin_bulk_update_priority"):
                             self._bulk_update_priority(filtered_logs, priority_change)
 
-                self._render_task_table(filtered_logs)
+                self._render_task_table(filtered_logs, context="admin")
             else:
                 st.info("📭 No tasks match your filters")
 
@@ -326,7 +333,7 @@ class ProjectLogFrontend:
                     st.error(f"❌ Error rendering user stats: {str(e)}")
             else:
                 st.info("📭 You have no assigned tasks")
-
+            
     def render_verification_tab(self):
         """Enhanced verification tab with batch processing"""
         st.subheader("✅ Pending Verification")
@@ -356,17 +363,17 @@ class ProjectLogFrontend:
         with st.expander("⚡ Batch Verification", expanded=False):
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("✅ Verify All", type="primary"):
-                    if st.checkbox("⚠️ Confirm batch verification"):
+                if st.button("✅ Verify All", key="batch_verify_all", type="primary"):
+                    if st.checkbox("⚠️ Confirm batch verification", key="batch_verify_confirm"):
                         verified_count = self._batch_verify_tasks(pending_logs)
                         st.success(f"✅ Verified {verified_count} tasks!")
                         st.rerun()
             with col2:
-                selected_user = st.selectbox("Verify by User", 
-                                           ["Select User"] + list(set(log['assigned_user'] for log in pending_logs)))
+                selected_user = st.selectbox("Verify by User", key="batch_verify_user_select",
+                                        options=["Select User"] + list(set(log['assigned_user'] for log in pending_logs)))
                 if selected_user != "Select User":
                     user_tasks = [log for log in pending_logs if log['assigned_user'] == selected_user]
-                    if st.button(f"✅ Verify {selected_user}'s Tasks ({len(user_tasks)})"):
+                    if st.button(f"✅ Verify {selected_user}'s Tasks ({len(user_tasks)})", key=f"batch_verify_user_{selected_user}"):
                         verified_count = self._batch_verify_tasks(user_tasks)
                         st.success(f"✅ Verified {verified_count} tasks for {selected_user}!")
                         st.rerun()
@@ -409,7 +416,7 @@ class ProjectLogFrontend:
                     priority_badge = format_priority_badge(log.get('priority', 'Medium'))
                     st.markdown(priority_badge, unsafe_allow_html=True)
                 with col5:
-                    if st.button("✅", key=f"verify_{log['_id']}", help="Verify this task"):
+                    if st.button("✅", key=f"verify_individual_{log['_id']}", help="Verify this task"):
                         try:
                             self._verify_task_completion_with_timestamp(log)
                             st.success(f"✅ Verified: {log['substage_name']}")
@@ -534,7 +541,7 @@ class ProjectLogFrontend:
             try:
                 overdue_style = "border-left: 4px solid #f44336;" if log.get("status") == "Overdue" else "border-left: 4px solid #4caf50;"
                 priority = log.get('priority', 'Medium')
-                priority_colors = {"High": "#ffebee", "Medium": "#fff3e0", "Low": "#e8f5e8"}
+                priority_colors = {"High": "#ffebee", "Medium": "#fff3e0", "Low": "#D3D3D3","Critical":"#FF0000"}
                 priority_color = priority_colors.get(priority, "#f5f5f5")
                 deadline = log.get('substage_deadline') or log.get('stage_deadline') or 'N/A'
 
@@ -691,6 +698,7 @@ class ProjectLogFrontend:
                 'High': '#FF5722',
                 'Medium': '#FF9800',
                 'Low': '#4CAF50'
+                "Critical": '#FF0000'
             };
             return '<span style="background-color:' + (colors[priority] || '#666') + '; color:white; padding:2px 8px; border-radius:12px; font-size:0.8em;">' + priority + '</span>';
         }
@@ -752,7 +760,7 @@ class ProjectLogFrontend:
             st.error(f"❌ Failed to verify task completion: {str(e)}")
             raise
 
-    def _render_task_table(self, logs):
+    def _render_task_table(self, logs, context="default"):
         """Enhanced task table with better functionality and error handling"""
         try:
             if not logs:
@@ -801,7 +809,8 @@ class ProjectLogFrontend:
                 fit_columns_on_grid_load=True,
                 update_mode=GridUpdateMode.SELECTION_CHANGED,
                 data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-                allow_unsafe_jscode=True
+                allow_unsafe_jscode=True,
+                key=f"task_table_aggrid_{context}"  # Dynamic key based on context
             )
             
             # Handle checked/selected rows
@@ -833,13 +842,13 @@ class ProjectLogFrontend:
                                 # Priority update for checked rows only
                                 new_priority = st.selectbox(
                                     "Change Priority for Selected", 
-                                    ["High", "Medium", "Low", "Critical"], 
+                                    options=["High", "Medium", "Low", "Critical"], 
                                     index=1,  # Default to Medium
-                                    key="bulk_priority_select"
+                                    key=f"bulk_priority_select_{context}"
                                 )
                             
                             with col2:
-                                if st.button("🔄 Update Priority", key="update_selected_priority", type="primary"):
+                                if st.button("🔄 Update Priority", key=f"update_selected_priority_{context}", type="primary"):
                                     updated_count = self._update_selected_tasks_priority(selected_task_data, new_priority)
                                     if updated_count > 0:
                                         st.success(f"🔄 Priority updated to {new_priority} for {updated_count} selected task(s)!")
@@ -849,7 +858,7 @@ class ProjectLogFrontend:
                             
                             with col3:
                                 # Complete selected tasks
-                                if st.button("✅ Complete Selected", key="complete_selected_tasks", type="secondary"):
+                                if st.button("✅ Complete Selected", key=f"complete_selected_tasks_{context}", type="secondary"):
                                     completed_count = self._complete_selected_tasks(selected_task_data)
                                     if completed_count > 0:
                                         st.success(f"✅ Marked {completed_count} selected task(s) for verification!")
@@ -859,7 +868,7 @@ class ProjectLogFrontend:
                                 # Verify selected tasks (if applicable)
                                 pending_tasks = [task for task in selected_task_data if task['log'].get('status') == 'Pending Verification']
                                 if pending_tasks:
-                                    if st.button(f"✅ Verify Selected ({len(pending_tasks)})", key="verify_selected_tasks", type="secondary"):
+                                    if st.button(f"✅ Verify Selected ({len(pending_tasks)})", key=f"verify_selected_tasks_{context}", type="secondary"):
                                         verified_count = self._verify_selected_tasks(pending_tasks)
                                         if verified_count > 0:
                                             st.success(f"✅ Verified {verified_count} selected task(s)!")
@@ -1151,13 +1160,12 @@ class ProjectLogFrontend:
         if not self.log_manager.client:
             st.error("❌ Cannot proceed without database connection")
             with st.expander("🔧 Database Connection Debug"):
-                if st.button("🔍 Test Connection"):
+                if st.button("🔍 Test Connection", key="main_debug_test_connection"):
                     self.log_manager.debug_database_connection()
             return
 
         try:
             user_role = st.session_state.get("role", "user")
-            current_user = st.session_state.get("username", "Guest")
             
             if user_role in ["admin", "manager"]:
                 # Admin/Manager interface
@@ -1168,8 +1176,8 @@ class ProjectLogFrontend:
                     st.warning(f"⚠️ Could not fetch pending count: {str(e)}")
                     verification_tab_label = "✅ Verification"
 
-                tab_dashboard, tab_user_logs, tab_verification = st.tabs([
-                    "📊 Dashboard", "👤 Task Management", verification_tab_label
+                tab_dashboard, tab_user_logs, tab_verification, tab_logs = st.tabs([
+                    "📊 Dashboard", "👤 Task Management", verification_tab_label, "Logs"
                 ])
                 
                 with tab_dashboard:
@@ -1192,6 +1200,14 @@ class ProjectLogFrontend:
                     except Exception as e:
                         st.error(f"❌ Verification error: {str(e)}")
                         st.exception(e)
+                
+                with tab_logs:
+                    try:
+                        # Use different context for logs tab to avoid conflicts
+                        self.render_user_logs_tab(is_admin=False)
+                    except Exception as e:
+                        st.error(f"❌ User interface error: {str(e)}")
+                        st.exception(e)
             else:
                 # Regular user interface
                 try:
@@ -1203,8 +1219,6 @@ class ProjectLogFrontend:
         except Exception as e:
             st.error(f"❌ Application error: {str(e)}")
             st.exception(e)
-
-
 def run():
     try:
         app = ProjectLogFrontend()
