@@ -1,6 +1,5 @@
 import streamlit as st
 
-
 class SessionManager:
     """Manage session state variables"""
     

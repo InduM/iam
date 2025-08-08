@@ -8,36 +8,55 @@ from backend.projects_backend import *
 from utils.utils_project_core import *
 from utils.utils_project_substage import *
 from utils.utils_project_user_sync import _initialize_services
-
-from utils.utils_project_form import _reset_create_form_state,initialize_create_form_state
+from utils.utils_project_form import _reset_create_form_state, initialize_create_form_state
 from .projects_display import (
     render_project_card, render_level_checkboxes_with_substages,
     render_custom_levels_editor, render_progress_section
 )
-
 from .project_logic import (
     _handle_create_project,
     handle_save_project,
     handle_level_change,
 )
 
+# Global CSS for modern styling
+st.markdown("""
+<style>
+.project-card {
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 15px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    transition: all 0.2s ease-in-out;
+}
+.project-card:hover {
+    transform: scale(1.02);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.section-header {
+    font-size: 1.1rem;
+    font-weight: bold;
+    margin-top: 1rem;
+    color: #333;
+}
+.filter-bar {
+    background-color: #f8f9fa;
+    padding: 10px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
 def run():
-    """Main function to run the project management interface"""
-    
-    # Initialize session state
     initialize_session_state()
     _initialize_services()
-    
     if "last_view" not in st.session_state:
         st.session_state.last_view = None
-
-
-    # Load projects from database on first run or when explicitly refreshed
     if "projects" not in st.session_state or st.session_state.get("refresh_projects", False):
         st.session_state.projects = load_projects_from_db()
         st.session_state.refresh_projects = False
-    
-    # Navigation
     if st.session_state.view == "dashboard":
         show_dashboard()
     elif st.session_state.view == "create":
@@ -45,81 +64,68 @@ def run():
     elif st.session_state.view == "edit":
         show_edit_form()
 
-def show_dashboard():
-    """Display the main dashboard with project list and controls"""
-    st.query_params["_"] = str(int(time.time() // 60))  # Trigger rerun every 60 seconds
 
-    # Action buttons
+
+def show_dashboard():
+    st.query_params["_"] = str(int(time.time() // 60))
     col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("➕ New Project"):
+        if st.button("➕ New Project", use_container_width=True):
             st.session_state.view = "create"
             st.rerun()
     with col2:
-        if st.button("🔄Refresh"):
+        if st.button("🔄 Refresh", use_container_width=True):
             st.session_state.refresh_projects = True
             st.rerun()
 
-    # Filters and search
-    col1, col2, col3 = st.columns([3, 2, 2])
-    with col1:
-        search_query = st.text_input("Search", placeholder="Name, client, or team")
-    with col2:
-        filter_template = st.selectbox("Template", ["All"] + list(TEMPLATES.keys()))
-    with col3:
-        all_levels = sorted(set(
-            lvl for proj in st.session_state.projects for lvl in proj.get("levels", [])
-        ))
-        filter_level = st.selectbox("Progress Level", ["All"] + all_levels)
+    with st.container():
+        st.markdown("<div class='filter-bar'>", unsafe_allow_html=True)
+        col1, col2, col3 ,col4= st.columns([3, 2, 2,2])
+        with col1:
+            search_query = st.text_input("🔍 Search", placeholder="Name, client, or team")
+        with col2:
+            filter_template = st.selectbox("📂 Template", ["All"] + list(TEMPLATES.keys()))
+        with col3:
+            all_levels = sorted(set(lvl for proj in st.session_state.projects for lvl in proj.get("levels", [])))
+            filter_level = st.selectbox("📊 Progress Level", ["All"] + all_levels)
+        with col4:
+            filter_due = st.date_input("📅 Due Before or On", value=None)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    filter_due = st.date_input("Due Before or On", value=None)
+    filtered_projects = _apply_filters(st.session_state.projects, search_query, filter_template, filter_level, filter_due)
 
-    # Apply filters
-    filtered_projects = _apply_filters(
-        st.session_state.projects, search_query, filter_template, filter_level, filter_due
-    )
-
-    # Display projects
+    cols = st.columns(3)
     for i, project in enumerate(filtered_projects):
-        render_project_card(project, i)
+        with cols[i % 3]:
+            st.markdown("<div class='project-card'>", unsafe_allow_html=True)
+            render_project_card(project, i)
+            st.markdown("</div>", unsafe_allow_html=True)
+
 
 def show_create_form():
-    """Display the create project form with substage support and proper field reset"""
-    st.title("Create Project")
-    
-    # ENHANCED: Proper form state initialization and reset
     initialize_create_form_state()
-
-    # Back button
     _render_back_button()
-    
-    # Template selection
     template_options = ["Custom Template"] + list(TEMPLATES.keys())
-    selected = st.selectbox("Select Template (optional)", template_options, 
-                           index=0 if not st.session_state.selected_template else None)
-    
+    selected = st.selectbox("📂 Select Template (optional)", template_options, index=0 if not st.session_state.selected_template else None)
     if selected != "Custom Template":
-        # If template changed, reset stage assignments
         if st.session_state.selected_template != selected:
             st.session_state.stage_assignments = {}
         st.session_state.selected_template = selected
     else:
-        # If switching to custom, reset everything
         if st.session_state.selected_template:
             st.session_state.stage_assignments = {}
         st.session_state.selected_template = ""
-    
-    # Form fields (these will be empty on new project)
-    name = st.text_input("Project Name", value="")  # Explicit empty value
+
+    st.markdown("<div class='section-header'>Project Details</div>", unsafe_allow_html=True)
+    name = st.text_input("📝 Project Name", value="")
     clients = get_all_clients()
     if not clients:
         st.warning("⚠ No clients found in the database.")
-    client = st.selectbox("Client", options=[""] + clients, index=0)  # Start with empty selection
-    description = st.text_area("Project Description", value="")  # Explicit empty value
-    start = st.date_input("Start Date", value=date.today())  # Default to today
-    due = st.date_input("Due Date", value=date.today())  # Default to today
-    
-    # Handle template levels
+    client = st.selectbox("👤 Client", options=[""] + clients, index=0)
+    description = st.text_area("🗒 Project Description", value="")
+    start = st.date_input("📅 Start Date", value=date.today())
+    due = st.date_input("📅 Due Date", value=date.today())
+
     if st.session_state.selected_template:
         st.markdown(f"Using template: **{st.session_state.selected_template}**")
         levels_from_template = TEMPLATES[st.session_state.selected_template].copy()
@@ -129,144 +135,80 @@ def show_create_form():
         st.session_state.custom_levels = levels_from_template + ["Invoice", "Payment"]
     else:
         render_custom_levels_editor()
-    
+
     team_members = get_team_members_username(st.session_state.get("role", ""))
-    
-    # Enhanced Stage Assignments Section with Substages
-    st.markdown("---")
-    stage_assignments = render_substage_assignments_editor(
-        st.session_state.custom_levels, 
-        team_members, 
-        st.session_state.get("stage_assignments", {})
-    )
+    st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
+    stage_assignments = render_substage_assignments_editor(st.session_state.custom_levels, team_members, st.session_state.get("stage_assignments", {}))
     st.session_state.stage_assignments = stage_assignments
-    
-    # Validate stage assignments
+
     if stage_assignments:
         assignment_issues = validate_stage_assignments(stage_assignments, st.session_state.custom_levels)
         if assignment_issues:
             for issue in assignment_issues:
                 st.warning(f"⚠️ {issue}")
-    
-    # Progress section
+
     render_progress_section("create")
-    
-    # Create button
-    if st.button("✅ Create Project"):
+
+    if st.button("✅ Create Project", use_container_width=True):
         _handle_create_project(name, client, description, start, due)
 
-
 def show_edit_form():
-    """Simplified edit form that always fetches fresh data on refresh"""
     pid = st.session_state.edit_project_id
-    
-    # Get current project for the header
     current_project = next((p for p in st.session_state.projects if p["id"] == pid), None)
     project_name = current_project.get("name", "") if current_project else ""
-    
-    # Render header with refresh button
     _render_edit_header_with_refresh(project_name, pid)
-    
-    # Check for refresh success message first
     if st.session_state.get(f"edit_refresh_success_{pid}", False):
         st.success("✅ Project data refreshed from database!")
         del st.session_state[f"edit_refresh_success_{pid}"]
-    
-    # Initialize edit mode if not done yet
     if not st.session_state.get(f"edit_initialized_{pid}", False):
         _initialize_edit_mode_state(pid)
         st.session_state[f"edit_initialized_{pid}"] = True
         st.rerun()
-    
-    # Get current project data - always fresh after refresh
     if not current_project:
         st.error("Project not found.")
         return
-    
-    # For direct database access, bypass session cache completely
     fresh_project = get_project_by_name(project_name)
     if not fresh_project:
         st.error("Project not found in database.")
         return
-    
-    # Use fresh project data instead of cached data
     project = ensure_project_defaults(fresh_project)
-    
     original_name = project.get("name", "")
-    
-    # Form fields using fresh project data
-    name = st.text_input("Project Name", value=project.get("name", ""))
+    st.markdown("<div class='section-header'>Project Details</div>", unsafe_allow_html=True)
+    name = st.text_input("📝 Project Name", value=project.get("name", ""))
     clients = get_all_clients()
     if not clients:
         st.warning("⚠ No clients found in the database.")
-    
-    # Client dropdown with safe default
     current_client = project.get("client", "")
     if current_client in clients:
-        client = st.selectbox("Client", options=clients, index=clients.index(current_client))
+        client = st.selectbox("👤 Client", options=clients, index=clients.index(current_client))
     else:
         st.warning(f"⚠ Current client '{current_client}' not found in client list. Please select a new client.")
-        client = st.selectbox("Client", options=clients)
-
-    description = st.text_area("Project Description", value=project.get("description", ""))
-    start = st.date_input("Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
-    due = st.date_input("Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
-    
-    team_members = get_team_members_username(st.session_state.get("role", ""))    
-    
-    # Stage Assignments Section - always use fresh data
-    st.markdown("---")
-    
-    # Get fresh stage assignments directly from the database project
+        client = st.selectbox("👤 Client", options=clients)
+    description = st.text_area("🗒 Project Description", value=project.get("description", ""))
+    start = st.date_input("📅 Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
+    due = st.date_input("📅 Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
+    team_members = get_team_members_username(st.session_state.get("role", ""))
+    st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
     current_stage_assignments = project.get("stage_assignments", {})
-    
-    # Use direct rendering without caching
-    stage_assignments = render_substage_assignments_editor(
-        project.get("levels", ["Initial", "Invoice", "Payment"]), 
-        team_members, 
-        current_stage_assignments
-    )
-    
-    # Validate stage assignments
+    stage_assignments = render_substage_assignments_editor(project.get("levels", ["Initial", "Invoice", "Payment"]), team_members, current_stage_assignments)
     if stage_assignments:
         assignment_issues = validate_stage_assignments(stage_assignments, project.get("levels", []))
         if assignment_issues:
             for issue in assignment_issues:
                 st.warning(f"⚠️ {issue}")
-    
-    # Show overdue stages
-    overdue_stages = get_overdue_stages(
-        current_stage_assignments, 
-        project.get("levels", []), 
-        project.get("level", -1)
-    )
+    overdue_stages = get_overdue_stages(current_stage_assignments, project.get("levels", []), project.get("level", -1))
     if overdue_stages:
         st.error("🔴 Overdue Stages:")
         for overdue in overdue_stages:
             st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue (Due: {overdue['deadline']})")
-    
-    # Progress section
     st.subheader("Progress")
-    
     def on_change_edit(new_index):
-        # Use fresh stage assignments for level changes
         fresh_proj = get_project_by_name(project_name)
         fresh_assignments = fresh_proj.get("stage_assignments", {}) if fresh_proj else {}
-        handle_level_change(fresh_proj or project, pid, new_index, fresh_assignments,"edit")
-    
-    # Check for success messages
-   # _check_edit_success_messages(pid)
-    
-    # Render level checkboxes with fresh data
-    render_level_checkboxes_with_substages(
-        "edit", pid, int(project.get("level", -1)), 
-        project.get("timestamps", {}), project.get("levels", ["Initial", "Invoice", "Payment"]), 
-        on_change_edit, editable=True, stage_assignments=current_stage_assignments, project=project
-    )
-    
-    if st.button("💾 Save"):
+        handle_level_change(fresh_proj or project, pid, new_index, fresh_assignments, "edit")
+    render_level_checkboxes_with_substages("edit", pid, int(project.get("level", -1)), project.get("timestamps", {}), project.get("levels", ["Initial", "Invoice", "Payment"]), on_change_edit, editable=True, stage_assignments=current_stage_assignments, project=project)
+    if st.button("💾 Save", use_container_width=True):
         handle_save_project(pid, project, name, client, description, start, due, original_name, stage_assignments)
-
 
 def _render_back_button():
     """Enhanced back button with cleanup"""

@@ -620,7 +620,6 @@ def _get_substage_status_info(substage):
     
     return status_info
 
-
 # Enhanced substage summary widget function
 def render_substage_summary_with_start_dates(project):
     """Enhanced substage summary that includes start date information"""
