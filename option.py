@@ -25,22 +25,6 @@ def get_base64(bin_file):
         data = f.read()
     return base64.b64encode(data).decode()
 
-def set_background(png_file):
-    bin_str = get_base64(png_file)
-    page_bg_img = '''
-    <style>
-    .stApp {
-    background-image: url("data:image/png;base64,%s");
-    background-size: cover;
-    background-color: rgba(255, 0, 0, 0.6);
-    }
-    </style>
-    ''' % bin_str
-    st.markdown(page_bg_img, unsafe_allow_html=True)
-
-
-
-#set_background('./images/v_shesh_cover.jpg')
 
 # Custom CSS for mobile-friendly UI
 st.markdown("""
@@ -69,11 +53,8 @@ st.markdown("""
 if not st.session_state.authenticated:
     load_page("login")
 else:
-    #image = Image.open(".\\images\\vshesh_logo.png")
     render_image("vshesh_logo.png")
-    #st.sidebar.image(image,
-    #    use_container_width=True,
-    #)
+    
     with st.sidebar:
         if st.session_state["role"] == "user":
             selected = option_menu(

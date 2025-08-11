@@ -25,11 +25,12 @@ def send_invoice_email(to_email, project_name):
         st.error(f"Failed to send email: {e}")
         return False
 
-def send_stage_assignment_email(to_emails, project_name, stage_name, deadline):
+def send_stage_assignment_email(to_emails, project_name, stage_name, deadline,default_body=None,subject=None):
     """Send stage assignment notification email"""
     try:
         yag = yagmail.SMTP(user=st.secrets["email"]["from"], password=st.secrets["email"]["password"])
-        subject = f"Stage Assignment – {project_name}: {stage_name}"
+        if not subject:
+            subject = f"Stage Assignment – {project_name}: {stage_name}"
         body = f"""
         You have been assigned to the '{stage_name}' stage of project '{project_name}'.
         
@@ -37,7 +38,11 @@ def send_stage_assignment_email(to_emails, project_name, stage_name, deadline):
         
         Please log in to the project management system to view details and update progress.
         """
-        yag.send(to=to_emails, subject=subject, contents=body)
+        if default_body:
+            content = default_body
+        else: 
+            content = body
+        yag.send(to=to_emails, subject=subject, contents=content)
         return True
     except Exception as e:
         st.error(f"Failed to send assignment email: {e}")

@@ -201,13 +201,12 @@ def validate_users_exist(usernames):
         
     except Exception as e:
         st.error(f"Error validating users: {str(e)}")
-        return False, []
-    
+        return False, []   
 
-# think about assignees as well
 def send_assignment_notifications(project_name, stage_assignments, changed_assignments_only=False, old_assignments=None):
     """
-    Send email notifications for stage assignments
+    Send email notifications for stage assignments and substage assignees.
+    Combines multiple assignments for the same person into one email.
     
     Args:
         project_name: Name of the project
@@ -217,36 +216,122 @@ def send_assignment_notifications(project_name, stage_assignments, changed_assig
     """
     try:
         assignments_to_notify = {}
-        
+
         if changed_assignments_only and old_assignments:
             # Find only changed assignments
             for stage_index, assignment in stage_assignments.items():
                 old_assignment = old_assignments.get(stage_index, {})
                 new_members = set(assignment.get("members", []))
                 old_members = set(old_assignment.get("members", []))
-                
+
                 newly_assigned = new_members - old_members
                 if newly_assigned:
                     assignments_to_notify[stage_index] = {
                         "members": list(newly_assigned),
                         "deadline": assignment.get("deadline", ""),
-                        "stage_name": assignment.get("stage_name", f"Stage {int(stage_index) + 1}")
+                        "stage_name": assignment.get("stage_name", f"Stage {int(stage_index) + 1}"),
+                        "substages": assignment.get("substages", [])
                     }
         else:
             # Send for all assignments
             assignments_to_notify = stage_assignments
-        
-        # Send emails
+
+        # Build combined assignment list per user
+        user_assignments_map = {}
+
         for stage_index, assignment in assignments_to_notify.items():
-            members = assignment.get("members", [])
-            if members:
-                deadline = assignment.get("deadline", "")
-                stage_name = assignment.get("stage_name", f"Stage {int(stage_index) + 1}")
-                member_emails = [f"{member}@v-shesh.com" for member in members]
-                send_stage_assignment_email(member_emails, project_name, stage_name, deadline)
-        
+            stage_name = assignment.get("stage_name", f"Stage {int(stage_index) + 1}")
+            stage_deadline = assignment.get("deadline", "")
+
+            # Stage-level members
+            for member in assignment.get("members", []):
+                user_assignments_map.setdefault(member, []).append({
+                    "task": stage_name,
+                    "deadline": stage_deadline
+                })
+
+            # Substage-level assignees
+            for substage in assignment.get("substages", []):
+                substage_name = substage.get("name", "Unnamed Substage")
+                substage_deadline = substage.get("deadline", stage_deadline)
+                for assignee in substage.get("assignees", []):
+                    user_assignments_map.setdefault(assignee, []).append({
+                        "task": f"{stage_name} → {substage_name}",
+                        "deadline": substage_deadline
+                    })
+
+        # Send one combined email per user
+        for user, tasks in user_assignments_map.items():
+            email = [f"{user}@v-shesh.com"]
+            send_combined_assignment_email(email, project_name, tasks,stage_name)
+
     except Exception as e:
         st.error(f"Error sending assignment notifications: {str(e)}")
+
+def send_combined_assignment_email(recipient_email, project_name, tasks,stage_name):
+    """
+    Send a single combined email to a user with all their stage/substage assignments.
+
+    Args:
+        recipient_email (str): Recipient's email address.
+        project_name (str): Name of the project.
+        tasks (list of dict): List of tasks with "task" and "deadline".
+                              Example: [{"task": "Stage 1 → Substage A", "deadline": "2025-05-12"}, ...]
+    """
+    try:
+        # Sort tasks by deadline (if available)
+        tasks_sorted = sorted(tasks, key=lambda x: x.get("deadline") or "")
+
+        # Build HTML table of assignments
+        task_rows = ""
+        for t in tasks_sorted:
+            task_name = t.get("task", "Unnamed Task")
+            deadline = t.get("deadline", "No Deadline Set") or "No Deadline Set"
+            task_rows += f"""
+                <tr>
+                    <td style="padding: 6px 10px; border: 1px solid #ddd;">{task_name}</td>
+                    <td style="padding: 6px 10px; border: 1px solid #ddd;">{deadline}</td>
+                </tr>
+            """
+
+        html_content = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; color: #333;">
+                <h2>📋 New Assignments for Project: {project_name}</h2>
+                <p>Hello,</p>
+                <p>You have been assigned the following tasks:</p>
+                <table style="border-collapse: collapse; width: 100%; border: 1px solid #ddd;">
+                    <thead>
+                        <tr style="background-color: #f4f4f4;">
+                            <th style="padding: 6px 10px; border: 1px solid #ddd;">Task</th>
+                            <th style="padding: 6px 10px; border: 1px solid #ddd;">Deadline</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {task_rows}
+                    </tbody>
+                </table>
+                <p style="margin-top: 20px;">Please ensure to complete the tasks by the given deadlines.</p>
+                <p>Regards,<br>Project Management System</p>
+            </body>
+        </html>
+        """
+
+        subject = f"Task Assignments for {project_name}"
+        
+        # Send using your existing email sender function
+        send_stage_assignment_email(
+            recipient_email,
+            subject = subject,
+            project_name = project_name,
+            default_body=html_content,
+            stage_name= stage_name,
+            deadline = deadline,
+        )
+
+    except Exception as e:
+        st.error(f"Error sending combined assignment email to {recipient_email}: {str(e)}")
+
 
 # ==============================================================================
 # HIGH-LEVEL PROJECT MANAGEMENT FUNCTIONS
