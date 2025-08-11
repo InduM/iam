@@ -1,9 +1,6 @@
 import streamlit as st
 import time
 from datetime import date
-from typing import List
-
-# Import functions from backend and utils
 from backend.projects_backend import *
 from utils.utils_project_core import *
 from utils.utils_project_substage import *
@@ -18,35 +15,6 @@ from .project_logic import (
     handle_save_project,
     handle_level_change,
 )
-
-# Global CSS for modern styling
-st.markdown("""
-<style>
-.project-card {
-    background: #ffffff;
-    border-radius: 10px;
-    padding: 15px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-    transition: all 0.2s ease-in-out;
-}
-.project-card:hover {
-    transform: scale(1.02);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-}
-.section-header {
-    font-size: 1.1rem;
-    font-weight: bold;
-    margin-top: 1rem;
-    color: #333;
-}
-.filter-bar {
-    background-color: #f8f9fa;
-    padding: 10px;
-    border-radius: 8px;
-    margin-bottom: 15px;
-}
-</style>
-""", unsafe_allow_html=True)
 
 
 def run():
@@ -63,7 +31,6 @@ def run():
         show_create_form()
     elif st.session_state.view == "edit":
         show_edit_form()
-
 
 
 def show_dashboard():

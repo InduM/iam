@@ -199,6 +199,7 @@ class ProjectLogFrontend:
                             self._show_task_modal(selected_log)
             except (KeyError, IndexError, TypeError):
                 st.warning("⚠️ Unable to load selected task details")
+
     
     def render_user_logs_tab(self, is_admin=True):
         """Enhanced user logs with better filtering and bulk operations"""
@@ -215,8 +216,10 @@ class ProjectLogFrontend:
         # Pass context to make toolbar keys unique
         toolbar_context = "admin" if is_admin else "user"
         self.render_toolbar(all_logs, context=toolbar_context)
-        current_user = st.session_state.get("username", "Unknown User")
-        
+
+        username = st.session_state.get("username", "Unknown User")
+        role = st.session_state.get("role", "user")
+
         # Enhanced search
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -227,6 +230,10 @@ class ProjectLogFrontend:
             search_in = st.selectbox("Search In", key=search_in_key, options=["All Fields", "Project Name", "Task Name", "User"])
 
         if is_admin:
+            # Manager role restriction
+            if role == "manager":
+                all_logs = [log for log in all_logs if log.get("created_by") == username]
+
             with st.expander("🔍 Advanced Filters", expanded=False):
                 col1, col2, col3 = st.columns(3)
                 
@@ -259,32 +266,29 @@ class ProjectLogFrontend:
                 with col4:
                     priority_filter = st.multiselect(
                         "Priority", key="admin_priority_filter",
-                        options=["High", "Medium", "Low","Critical"],
-                        default=["High", "Medium", "Low","Critical"]
+                        options=["High", "Medium", "Low", "Critical"],
+                        default=["High", "Medium", "Low", "Critical"]
                     )
                 
                 with col5:
-                    # Date range filter
                     date_filter = st.date_input("Deadline Range", key="admin_date_filter", value=None, help="Filter by deadline range")
                 
                 with col6:
-                    # Additional filters
                     include_completed = st.checkbox("Include Completed", key="admin_include_completed", value=True)
                     overdue_only = st.checkbox("Show Overdue Only", key="admin_overdue_only", value=False)
 
-            # Apply filters - FIXED: Improved error handling
             try:
                 filtered_logs = self._apply_filters(
                     all_logs, selected_project, selected_user, status_filter, 
                     priority_filter, include_completed, overdue_only, search_query, search_in
                 )
+                filtered_logs = self._sort_logs(filtered_logs)
             except Exception as e:
                 st.error(f"❌ Error applying filters: {str(e)}")
-                filtered_logs = all_logs
+                filtered_logs = self._sort_logs(all_logs)
 
             st.subheader(f"📋 Showing {len(filtered_logs)} of {len(all_logs)} tasks")
             
-            # Bulk operations for admin
             if len(filtered_logs) > 0:
                 with st.expander("⚡ Bulk Operations", expanded=False):
                     col1, col2, col3 = st.columns(3)
@@ -297,7 +301,7 @@ class ProjectLogFrontend:
                             if st.checkbox("Confirm bulk deletion", key="admin_bulk_delete_confirm"):
                                 self._bulk_delete_tasks(filtered_logs)
                     with col3:
-                        priority_change = st.selectbox("Change Priority To", key="admin_bulk_priority_change", options=["High", "Medium", "Low","Critical"])
+                        priority_change = st.selectbox("Change Priority To", key="admin_bulk_priority_change", options=["High", "Medium", "Low", "Critical"])
                         if st.button("🔄 Update Priority", key="admin_bulk_update_priority"):
                             self._bulk_update_priority(filtered_logs, priority_change)
 
@@ -306,18 +310,17 @@ class ProjectLogFrontend:
                 st.info("📭 No tasks match your filters")
 
         else:
-            # Non-admin view
             try:
-                user_logs = [log for log in all_logs if log.get("assigned_user") == current_user]
+                user_logs = [log for log in all_logs if log.get("assigned_user") == username]
                 if search_query:
                     user_logs = self._search_logs(user_logs, search_query, search_in)
+                user_logs = self._sort_logs(user_logs)
             except Exception as e:
                 st.error(f"❌ Error filtering user logs: {str(e)}")
                 user_logs = []
 
             st.subheader(f"📋 Your Assigned Tasks ({len(user_logs)})")
             
-            # User task summary
             if len(user_logs) > 0:
                 try:
                     user_stats = self._get_user_stats(user_logs)
@@ -333,6 +336,7 @@ class ProjectLogFrontend:
                     st.error(f"❌ Error rendering user stats: {str(e)}")
             else:
                 st.info("📭 You have no assigned tasks")
+
             
     def render_verification_tab(self):
         """Enhanced verification tab with batch processing"""
@@ -534,53 +538,141 @@ class ProjectLogFrontend:
         except Exception as e:
             st.error(f"❌ Error calculating user stats: {str(e)}")
             return {'total': 0, 'completed': 0, 'pending': 0, 'overdue': 0}
+    
+    def _sort_logs(self, logs):
+        """
+        Sort logs so that:
+        1. Overdue tasks first (regardless of priority)
+        2. Current tasks (today's date or earlier, but not overdue)
+        3. Upcoming tasks (future deadlines) at the bottom
+        Within each group:
+            a. Incomplete before completed
+            b. Priority order: Critical → High → Medium → Low
+            c. Earliest deadline first
+        """
+        try:
+            priority_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+            today = datetime.today().date()
+
+            def sort_key(log):
+                # Parse deadline
+                deadline_str = log.get("substage_deadline") or log.get("stage_deadline") or ""
+                try:
+                    deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d").date() if deadline_str else None
+                except Exception:
+                    deadline_dt = None
+
+                # 1. Determine task group: 0 = overdue, 1 = current, 2 = upcoming
+                if deadline_dt and deadline_dt < today and not log.get("is_completed", False):
+                    group_flag = 0  # Overdue
+                elif deadline_dt and deadline_dt > today:
+                    group_flag = 2  # Upcoming
+                else:
+                    group_flag = 1  # Current
+
+                # 2. Completion flag (incomplete first)
+                completed_flag = 0 if not log.get("is_completed", False) else 1
+
+                # 3. Priority rank
+                priority_rank = priority_order.get(log.get("priority", "Medium"), 2)
+
+                # 4. Earliest deadline first (None = bottom)
+                deadline_sort = deadline_dt if deadline_dt else datetime.max.date()
+
+                return (group_flag, completed_flag, priority_rank, deadline_sort)
+
+            return sorted(logs, key=sort_key)
+
+        except Exception as e:
+            st.warning(f"⚠️ Error sorting logs: {str(e)}")
+            return logs
+
 
     def _render_user_task_cards(self, user_logs):
-        """Render user tasks as cards with error handling"""
-        for log in user_logs:
-            try:
-                overdue_style = "border-left: 4px solid #f44336;" if log.get("status") == "Overdue" else "border-left: 4px solid #4caf50;"
-                priority = log.get('priority', 'Medium')
-                priority_colors = {"High": "#ffebee", "Medium": "#fff3e0", "Low": "#F9F9F9","Critical":"#FF0000"}
-                priority_color = priority_colors.get(priority, "#f5f5f5")
-                deadline = log.get('substage_deadline') or log.get('stage_deadline') or 'N/A'
+        """Render user tasks as cards grouped into Overdue, Current, and Upcoming."""
+        try:
+            # ✅ Apply sorting first
+            user_logs = self._sort_logs(user_logs)
 
-                with st.container():
-                    st.markdown(
-                        f"""
-                        <div style='{overdue_style} background-color:{priority_color}; padding:12px; border-radius:8px; margin:8px 0;'>
-                            <div style='display: flex; justify-content: space-between; align-items: center;'>
-                                <div>
-                                    <strong style='font-size: 1.1em;'>{log.get('project_name', 'Unknown Project')}</strong><br>
-                                    <small style='color: #666;'>Stage: {log.get('stage_name', 'Unknown')} → {log.get('substage_name', 'Unknown')}</small><br>
-                                    <small style='color: #888;'>Priority: {priority} | Deadline: {self._format_date(deadline)}</small>
+            today = datetime.today().date()
+            overdue_tasks = []
+            current_tasks = []
+            upcoming_tasks = []
+
+            # Group logs
+            for log in user_logs:
+                deadline_str = log.get("substage_deadline") or log.get("stage_deadline") or ""
+                try:
+                    deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d").date() if deadline_str else None
+                except Exception:
+                    deadline_dt = None
+
+                if deadline_dt and deadline_dt < today and not log.get("is_completed", False):
+                    overdue_tasks.append(log)
+                elif deadline_dt and deadline_dt > today:
+                    upcoming_tasks.append(log)
+                else:
+                    current_tasks.append(log)
+
+            # Helper to render a group
+            def render_group(title, tasks, color):
+                if tasks:
+                    st.markdown(f"### {title}")
+                    st.markdown(f"<hr style='border:1px solid {color};'/>", unsafe_allow_html=True)
+                    for log in tasks:
+                        try:
+                            overdue_style = "border-left: 4px solid #f44336;" if title == "Overdue Tasks" else "border-left: 4px solid #4caf50;"
+                            priority = log.get('priority', 'Medium')
+                            priority_colors = {
+                                "High": "#ffebee",
+                                "Medium": "#fff3e0",
+                                "Low": "#F9F9F9",
+                                "Critical": "#FF0000"
+                            }
+                            priority_color = priority_colors.get(priority, "#f5f5f5")
+                            deadline = log.get('substage_deadline') or log.get('stage_deadline') or 'N/A'
+
+                            st.markdown(
+                                f"""
+                                <div style='{overdue_style} background-color:{priority_color}; padding:12px; border-radius:8px; margin:8px 0;'>
+                                    <div style='display: flex; justify-content: space-between; align-items: center;'>
+                                        <div>
+                                            <strong style='font-size: 1.1em;'>{log.get('project_name', 'Unknown Project')}</strong><br>
+                                            <small style='color: #666;'>Stage: {log.get('stage_name', 'Unknown')} → {log.get('substage_name', 'Unknown')}</small><br>
+                                            <small style='color: #888;'>Priority: {priority} | Deadline: {self._format_date(deadline)}</small>
+                                        </div>
+                                        <div style='text-align: right;'>
+                                            {format_status_badge(log.get('status', 'Unknown'))}
+                                        </div>
                                     </div>
-                                <div style='text-align: right;'>
-                                    {format_status_badge(log.get('status', 'Unknown'))}
                                 </div>
-                            </div>
-                        </div>
-                        """, 
-                        unsafe_allow_html=True
-                    )
-                    # Action buttons
-                    col1, col2, col3 = st.columns([1, 1, 2])
-                    with col1:
-                        if log.get('status') == "Pending Verification":
-                            st.info("⏳ Awaiting Verification")
-                        elif not log.get('is_completed', False):
-                            if st.button("✅ Complete", key=f"complete_{log['_id']}"):
-                                try:
-                                    self._mark_task_for_verification(str(log['_id']))
-                                    st.success("⏳ Task marked for verification!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"❌ Failed to complete task: {str(e)}")
-                        else:
-                            pass
-                    
-            except Exception as e:
-                st.error(f"❌ Error rendering task card: {str(e)}")
+                                """, 
+                                unsafe_allow_html=True
+                            )
+
+                            # Action buttons
+                            col1, col2, col3 = st.columns([1, 1, 2])
+                            with col1:
+                                if log.get('status') == "Pending Verification":
+                                    st.info("⏳ Awaiting Verification")
+                                elif not log.get('is_completed', False):
+                                    if st.button("✅ Complete", key=f"complete_{log['_id']}"):
+                                        try:
+                                            self._mark_task_for_verification(str(log['_id']))
+                                            st.success("⏳ Task marked for verification!")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"❌ Failed to complete task: {str(e)}")
+                        except Exception as e:
+                            st.error(f"❌ Error rendering task card: {str(e)}")
+
+            # Render each section
+            render_group("Overdue Tasks", overdue_tasks, "#f44336")
+            render_group("Current Tasks", current_tasks, "#4caf50")
+            render_group("Upcoming Tasks", upcoming_tasks, "#2196f3")
+
+        except Exception as e:
+            st.error(f"❌ Error preparing user task cards: {str(e)}")
 
     def _format_date(self, date_str):
         """Format date string for display with improved error handling"""
@@ -761,12 +853,25 @@ class ProjectLogFrontend:
             raise
 
     def _render_task_table(self, logs, context="default"):
-        """Enhanced task table with better functionality and error handling"""
+        """Enhanced task table with better functionality, error handling, sorting, and manager restriction."""
         try:
             if not logs:
                 st.info("📭 No tasks to display")
                 return
-                
+
+            # ✅ Manager restriction for admin-style views
+            username = st.session_state.get("username", "Unknown User")
+            role = st.session_state.get("role", "user")
+            if role == "manager" and context in ["admin", "default"]:
+                logs = [log for log in logs if log.get("created_by") == username]
+
+            if not logs:
+                st.info("📭 No tasks available after applying manager restrictions")
+                return
+
+            # ✅ Apply sorting before display
+            logs = self._sort_logs(logs)
+
             df = pd.DataFrame([
                 {
                     "Project": log.get("project_name", "Unknown"),
@@ -783,37 +888,33 @@ class ProjectLogFrontend:
                 }
                 for log in logs
             ])
-            
-            # Enhanced grid configuration with multiple selection
+
             gb = GridOptionsBuilder.from_dataframe(df.drop('ID', axis=1))
             gb.configure_pagination(paginationAutoPageSize=True, paginationPageSize=20)
             gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
             gb.configure_selection('multiple', use_checkbox=True, groupSelectsChildren=True, groupSelectsFiltered=True)
-            
-            # Custom cell renderers
+
             gb.configure_column("Status", cellRenderer=self._status_cell_renderer(), width=120)
             gb.configure_column("Priority", cellRenderer=self._priority_cell_renderer(), width=100)
             gb.configure_column("Completed", width=100)
             gb.configure_column("Project", width=200)
             gb.configure_column("User", width=120)
-            
-            # Grid options
+
             gridOptions = gb.build()
             gridOptions['rowHeight'] = 40
             gridOptions['headerHeight'] = 45
-            
+
             grid_response = AgGrid(
-                df.drop('ID', axis=1), 
-                gridOptions=gridOptions, 
-                height=500, 
+                df.drop('ID', axis=1),
+                gridOptions=gridOptions,
+                height=500,
                 fit_columns_on_grid_load=True,
                 update_mode=GridUpdateMode.SELECTION_CHANGED,
                 data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
                 allow_unsafe_jscode=True,
-                key=f"task_table_aggrid_{context}"  # Dynamic key based on context
+                key=f"task_table_aggrid_{context}"
             )
-            
-            # Handle checked/selected rows
+
             selected_rows = grid_response.get('selected_rows', [])
             if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
                 selected_rows = selected_rows.to_dict('records')
@@ -822,31 +923,26 @@ class ProjectLogFrontend:
 
             if selected_rows and len(selected_rows) > 0:
                 try:
-                    # Get the selected task IDs and logs
                     selected_task_data = self._get_selected_tasks_data(selected_rows, df, logs)
-                    
+
                     if selected_task_data:
-                        # Show selected tasks actions
                         with st.container():
                             st.info(f"🎯 Selected {len(selected_task_data)} task(s)")
-                            
-                            # Show selected tasks summary
+
                             with st.expander(f"📋 Selected Tasks ({len(selected_task_data)})", expanded=False):
                                 for task_data in selected_task_data:
                                     st.write(f"• **{task_data['log'].get('project_name', 'Unknown')}** - {task_data['log'].get('substage_name', 'Unknown')} (Priority: {task_data['log'].get('priority', 'Medium')})")
-                            
-                            # Bulk actions for selected rows only
+
                             col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
-                            
+
                             with col1:
-                                # Priority update for checked rows only
                                 new_priority = st.selectbox(
-                                    "Change Priority for Selected", 
-                                    options=["High", "Medium", "Low", "Critical"], 
-                                    index=1,  # Default to Medium
+                                    "Change Priority for Selected",
+                                    options=["High", "Medium", "Low", "Critical"],
+                                    index=1,
                                     key=f"bulk_priority_select_{context}"
                                 )
-                            
+
                             with col2:
                                 if st.button("🔄 Update Priority", key=f"update_selected_priority_{context}", type="primary"):
                                     updated_count = self._update_selected_tasks_priority(selected_task_data, new_priority)
@@ -855,17 +951,15 @@ class ProjectLogFrontend:
                                         st.rerun()
                                     else:
                                         st.warning("⚠️ No tasks were updated")
-                            
+
                             with col3:
-                                # Complete selected tasks
                                 if st.button("✅ Complete Selected", key=f"complete_selected_tasks_{context}", type="secondary"):
                                     completed_count = self._complete_selected_tasks(selected_task_data)
                                     if completed_count > 0:
                                         st.success(f"✅ Marked {completed_count} selected task(s) for verification!")
                                         st.rerun()
-                            
+
                             with col4:
-                                # Verify selected tasks (if applicable)
                                 pending_tasks = [task for task in selected_task_data if task['log'].get('status') == 'Pending Verification']
                                 if pending_tasks:
                                     if st.button(f"✅ Verify Selected ({len(pending_tasks)})", key=f"verify_selected_tasks_{context}", type="secondary"):
@@ -873,12 +967,12 @@ class ProjectLogFrontend:
                                         if verified_count > 0:
                                             st.success(f"✅ Verified {verified_count} selected task(s)!")
                                             st.rerun()
-                    
+
                 except Exception as e:
                     st.warning(f"⚠️ Unable to load selected task details: {str(e)}")
             else:
                 st.info("ℹ️ Check the boxes next to rows to perform bulk actions on selected tasks")
-                        
+
         except Exception as e:
             st.error(f"❌ Error rendering task table: {str(e)}")
 
@@ -950,14 +1044,15 @@ class ProjectLogFrontend:
 
 
     def _get_selected_tasks_data(self, selected_rows, df, logs):
-        """Extract task data for selected rows"""
+        """Extract task data for selected rows, with manager restrictions."""
         try:
+            username = st.session_state.get("username", "Unknown User")
+            role = st.session_state.get("role", "user")
             selected_task_data = []
-            
+
             for selected_row in selected_rows:
                 try:
                     # Find the corresponding row in the dataframe
-                    # Match by multiple fields to ensure accuracy
                     matching_rows = df[
                         (df['Project'] == selected_row.get('Project', '')) &
                         (df['Stage'] == selected_row.get('Stage', '')) &
@@ -969,11 +1064,15 @@ class ProjectLogFrontend:
                         # Get the first match (should be unique)
                         matched_row = matching_rows.iloc[0]
                         task_id = matched_row['ID']
-                        
+
                         # Find the corresponding log
                         matching_log = next((log for log in logs if str(log["_id"]) == task_id), None)
-                        
+
                         if matching_log:
+                            # ✅ Apply manager restriction
+                            if role == "manager" and matching_log.get("created_by") != username:
+                                continue  # Skip tasks not from this manager's project
+
                             selected_task_data.append({
                                 'task_id': task_id,
                                 'log': matching_log
@@ -982,9 +1081,9 @@ class ProjectLogFrontend:
                 except Exception as e:
                     st.warning(f"⚠️ Error processing selected row: {str(e)}")
                     continue
-            
+
             return selected_task_data
-            
+
         except Exception as e:
             st.error(f"❌ Error extracting selected tasks: {str(e)}")
             return []
