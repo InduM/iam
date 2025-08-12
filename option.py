@@ -54,7 +54,6 @@ if not st.session_state.authenticated:
     load_page("login")
 else:
     render_image("vshesh_logo.png")
-    
     with st.sidebar:
         if st.session_state["role"] == "user":
             selected = option_menu(

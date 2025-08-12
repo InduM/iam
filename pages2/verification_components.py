@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 from streamlit_modal import Modal
 from utils.utils_log import format_status_badge, format_priority_badge
+from bson import ObjectId  # Add this import
 
 
 class VerificationComponents:
@@ -161,7 +162,7 @@ class VerificationComponents:
 
 
     def _undo_task_verification(self, log):
-        """Undo verification for a specific task, reverting it to Pending Verification status"""
+        """Undo verification for a specific task, reverting it to Pending Verification status and updating project page."""
         try:
             project_id = log["project_id"]
             stage_key = log["stage_key"]
@@ -183,6 +184,10 @@ class VerificationComponents:
                         "completed_at": ""
                     }}
                 )
+                
+                # Update project's substage completion status to false
+                self._update_project_substage_completion(project_id, stage_key, substage_id, False)
+                
             else:
                 # Stage-level log: undo verification for all logs of this stage
                 self.log_manager.logs.update_many(
@@ -198,16 +203,112 @@ class VerificationComponents:
                         "completed_at": ""
                     }}
                 )
+                
+                # Update project's stage completion status to false
+                self._update_project_stage_completion(project_id, stage_key, False)
 
             # Recalculate and update stage completion status
             self.log_manager.update_stage_completion_status(project_id, stage_key)
-
+            
             # Set session state to stay on verification tab
             st.session_state.active_tab = 2  # Verification tab index
+            
         except Exception as e:
             st.error(f"❌ Failed to undo task verification: {str(e)}")
             raise
-    
+
+
+    def _update_project_stage_completion(self, project_id, stage_key, completed_status):
+        """Update stage completion status in the project document"""
+        try:
+            # Update the project's level (stage completion)
+            if completed_status:
+                # Get current project to determine next level
+                project = self.log_manager.projects.find_one({"_id": ObjectId(project_id)})
+                if project:
+                    current_level = project.get("level", 0)
+                    stage_index = int(stage_key) if stage_key.isdigit() else 0
+                    
+                    # Only update level if this stage is the current or next stage
+                    if stage_index >= current_level:
+                        new_level = stage_index + 1
+                        self.log_manager.projects.update_one(
+                            {"_id": ObjectId(project_id)},
+                            {"$set": {
+                                "level": new_level,
+                                f"timestamps.{stage_key}": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "updated_at": datetime.now()
+                            }}
+                        )
+            else:
+                # When undoing, we need to be careful not to break the progression
+                project = self.log_manager.projects.find_one({"_id": ObjectId(project_id)})
+                if project:
+                    stage_index = int(stage_key) if stage_key.isdigit() else 0
+                    current_level = project.get("level", 0)
+                    
+                    # Only decrease level if this was the most recently completed stage
+                    if stage_index == current_level - 1:
+                        self.log_manager.projects.update_one(
+                            {"_id": ObjectId(project_id)},
+                            {"$set": {
+                                "level": stage_index,
+                                "updated_at": datetime.now()
+                            },
+                            "$unset": {
+                                f"timestamps.{stage_key}": ""
+                            }}
+                        )
+                        
+        except Exception as e:
+            st.error(f"❌ Failed to update project stage completion: {str(e)}")
+            raise
+
+
+    def _update_project_substage_completion(self, project_id, stage_key, substage_id, completed_status):
+        """Update substage completion status in the project document"""
+        try:
+            # Parse the substage_id to extract the substage index
+            # Format: substage_{stage_index}_{substage_index}_{random_id}
+            parts = substage_id.split('_')
+            if len(parts) >= 3:
+                stage_index = parts[1]
+                substage_index = parts[2]
+                
+                # Update the project's substage_completion field
+                update_field = f"substage_completion.{stage_index}.{substage_index}"
+                
+                self.log_manager.projects.update_one(
+                    {"_id": ObjectId(project_id)},
+                    {"$set": {
+                        update_field: completed_status,
+                        "updated_at": datetime.now()
+                    }}
+                )
+                
+                # Also update the substage timestamps if completing
+                if completed_status:
+                    timestamp_field = f"substage_timestamps.{stage_index}.{substage_index}"
+                    self.log_manager.projects.update_one(
+                        {"_id": ObjectId(project_id)},
+                        {"$set": {
+                            timestamp_field: datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }}
+                    )
+                else:
+                    # Remove timestamp if undoing completion
+                    timestamp_field = f"substage_timestamps.{stage_index}.{substage_index}"
+                    self.log_manager.projects.update_one(
+                        {"_id": ObjectId(project_id)},
+                        {"$unset": {timestamp_field: ""}}
+                    )
+                    
+        except Exception as e:
+            st.error(f"❌ Failed to update project substage completion: {str(e)}")
+            raise
+
+
+
     def _batch_undo_verifications(self, tasks):
         """Undo verification for multiple tasks at once"""
         undone_count = 0
@@ -235,13 +336,13 @@ class VerificationComponents:
         return verified_count
 
     def _verify_task_completion_with_timestamp(self, log):
-        """Verify all logs of the same substage or stage, then update stage completion."""
+        """Verify all logs of the same substage or stage, then update stage completion and project page."""
         try:
             project_id = log["project_id"]
             stage_key = log["stage_key"]
             substage_id = log.get("substage_id")
             current_time = datetime.now()
-
+            
             if substage_id:
                 # Verify all logs for the same substage
                 self.log_manager.logs.update_many(
@@ -254,6 +355,10 @@ class VerificationComponents:
                         "updated_at": current_time
                     }}
                 )
+                
+                # Update project's substage completion status
+                self._update_project_substage_completion(project_id, stage_key, substage_id, True)
+                
             else:
                 # Stage-level log: verify all logs for this stage
                 self.log_manager.logs.update_many(
@@ -266,15 +371,21 @@ class VerificationComponents:
                         "updated_at": current_time
                     }}
                 )
+                
+                # Update project's stage completion status
+                self._update_project_stage_completion(project_id, stage_key, True)
 
             # Recalculate and update stage completion
             self.log_manager.update_stage_completion_status(project_id, stage_key)
+            
             # Set session state to stay on verification tab
             st.session_state.active_tab = 2  # Verification tab index
+            
         except Exception as e:
             st.error(f"❌ Failed to verify task completion: {str(e)}")
             raise
 
+        
     def _format_datetime(self, dt):
         """Format datetime for display with improved error handling"""
         try:
