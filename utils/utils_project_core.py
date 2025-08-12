@@ -6,9 +6,6 @@ import yagmail
 
 # ───── Constants ─────
 TEMPLATES = {
-    "Software Project": ["Planning", "Design", "Development", "Testing", "Deployment"],
-    "Research Project": ["Hypothesis", "Data Collection", "Analysis", "Publication"],
-    "Event Planning": ["Ideation", "Budgeting", "Vendor Selection", "Promotion", "Execution"],
     "v-shesh": ["Initial Contact", "Scope", "Proposal", "Accept Quote", "Onboarding", "Service"]
 }
 

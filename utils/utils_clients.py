@@ -25,7 +25,8 @@ def filter_clients_by_search(clients, search_query):
             q in c.get("email", "").lower() or
             q in c.get("company", "").lower() or
             q in c.get("spoc_name", "").lower() or
-            q in c.get("phone_number", "").lower()]
+            q in c.get("phone_number", "").lower() or
+            q in c.get("description", "").lower()]
 
 def validate_client_data(name, email, company):
     """Validate required client fields"""
@@ -42,7 +43,7 @@ def validate_client_data(name, email, company):
     
     return errors
 
-def create_client_data(name, email, company, spoc_name, phone_number, username):
+def create_client_data(name, email, company, spoc_name, phone_number, username, description=""):
     """Create client data dictionary with metadata"""
     return {
         "client_name": name,
@@ -50,11 +51,12 @@ def create_client_data(name, email, company, spoc_name, phone_number, username):
         "company": company,
         "spoc_name": spoc_name,
         "phone_number": phone_number,
+        "description": description,
         "created_by": username,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
-def create_update_data(name, email, company, spoc_name, phone_number):
+def create_update_data(name, email, company, spoc_name, phone_number, description=""):
     """Create update data dictionary with metadata"""
     return {
         "client_name": name,
@@ -62,6 +64,7 @@ def create_update_data(name, email, company, spoc_name, phone_number):
         "company": company,
         "spoc_name": spoc_name,
         "phone_number": phone_number,
+        "description": description,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 

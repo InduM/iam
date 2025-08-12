@@ -89,7 +89,7 @@ class ProjectLogFrontend:
             return 0
 
     def run(self):
-        """Main application runner with enhanced error handling and tab persistence"""
+        """Main application runner with enhanced error handling and tab interface"""
         if not self.log_manager.client:
             st.error("❌ Cannot proceed without database connection")
             with st.expander("🔧 Database Connection Debug"):
@@ -101,7 +101,7 @@ class ProjectLogFrontend:
             user_role = st.session_state.get("role", "user")
             
             if user_role in ["admin", "manager"]:
-                # Admin/Manager interface
+                # Admin/Manager interface with tabs
                 try:
                     pending_count = self.log_manager.logs.count_documents({"status": "Pending Verification"})
                     verification_tab_label = f"✅ Verification ({pending_count})" if pending_count > 0 else "✅ Verification"
@@ -118,49 +118,40 @@ class ProjectLogFrontend:
                 verification = VerificationComponents(self.log_manager)
                 task_mgmt = TaskManagementComponents(self.log_manager)
 
-                # Set default active tab based on session state
-                if 'active_tab' not in st.session_state:
-                    st.session_state.active_tab = 0
+                # Create tabs using st.tabs()
+                tab1, tab2, tab3, tab4 = st.tabs([
+                    "📊 Dashboard", 
+                    "👤 Task Management", 
+                    verification_tab_label, 
+                    "📋 Logs"
+                ])
                 
-                # Create tabs with proper indexing
-                tab_names = ["📊 Dashboard", "👤 Task Management", verification_tab_label, "Logs"]
-                selected_tab = st.selectbox(
-                    "Select Tab", 
-                    options=range(len(tab_names)), 
-                    format_func=lambda x: tab_names[x],
-                    index=st.session_state.active_tab,
-                    key="main_tab_selector",
-                    label_visibility="collapsed"
-                )
-                
-                # Update session state when tab changes
-                if selected_tab != st.session_state.active_tab:
-                    st.session_state.active_tab = selected_tab
-                    st.rerun()
-                
-                # Render content based on selected tab
-                if selected_tab == 0:  # Dashboard
+                # Dashboard Tab
+                with tab1:
                     try:
                         dashboard.render_dashboard_tab()
                     except Exception as e:
                         st.error(f"❌ Dashboard error: {str(e)}")
                         st.exception(e)
                 
-                elif selected_tab == 1:  # Task Management
+                # Task Management Tab
+                with tab2:
                     try:
                         task_mgmt.render_user_logs_tab(is_admin=True)
                     except Exception as e:
                         st.error(f"❌ Task management error: {str(e)}")
                         st.exception(e)
                 
-                elif selected_tab == 2:  # Verification
+                # Verification Tab
+                with tab3:
                     try:
                         verification.render_verification_tab()
                     except Exception as e:
                         st.error(f"❌ Verification error: {str(e)}")
                         st.exception(e)
                 
-                elif selected_tab == 3:  # Logs
+                # Logs Tab
+                with tab4:
                     try:
                         task_mgmt.render_user_logs_tab(is_admin=False)
                     except Exception as e:
@@ -179,7 +170,6 @@ class ProjectLogFrontend:
         except Exception as e:
             st.error(f"❌ Application error: {str(e)}")
             st.exception(e)
-
             
 def run():
     try:

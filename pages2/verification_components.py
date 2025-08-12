@@ -107,10 +107,11 @@ class VerificationComponents:
                     if i < len(pending_logs) - 1:
                         st.divider()
 
-        # Recently Verified Tasks with Undo Option
+        # Recently Verified Tasks with Undo Option - ALWAYS SHOW THIS SECTION
+        st.divider()
+        st.subheader("🔄 Recently Verified Tasks")
+        
         if recently_verified:
-            st.divider()
-            st.subheader("🔄 Recently Verified Tasks")
             st.caption("Last 20 verified tasks - you can undo verification if needed")
             
             with st.expander("📋 Recently Verified Tasks", expanded=False):
@@ -159,7 +160,28 @@ class VerificationComponents:
                         
                         if i < len(recently_verified) - 1:
                             st.divider()
-
+        else:
+            # Show empty state but still show the section
+            st.caption("No recently verified tasks available")
+            
+            with st.expander("📋 Recently Verified Tasks", expanded=False):
+                st.info("📭 No recently verified tasks to display")
+                st.markdown("""
+                **What you can do here:**
+                - View the last 20 verified tasks
+                - Undo verification for individual tasks
+                - Batch undo verifications by user
+                - Tasks will appear here after verification
+                """)
+                
+                # Show placeholder metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Recently Verified", 0)
+                with col2:
+                    st.metric("Available to Undo", 0)
+                with col3:
+                    st.metric("Users Involved", 0)
 
     def _undo_task_verification(self, log):
         """Undo verification for a specific task, reverting it to Pending Verification status and updating project page."""

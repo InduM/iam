@@ -29,7 +29,7 @@ class ClientsFrontend:
                 st.rerun()
 
         # Search Filter
-        search_query = st.text_input("🔍 Search", placeholder="Name, Email, Company, SPOC, or Phone")
+        search_query = st.text_input("🔍 Search", placeholder="Name, Email, Company, SPOC, Phone or Description")
 
         # Load and filter clients
         clients = self.backend.load_clients()
@@ -59,6 +59,12 @@ class ClientsFrontend:
         st.markdown(f"**Email:** {client.get('email', '-')}")
         st.markdown(f"**SPOC Name:** {client.get('spoc_name', '-')}")
         st.markdown(f"**Phone Number:** {client.get('phone_number', '-')}")
+        
+        # Display description if it exists
+        description = client.get('description', '')
+        if description:
+            st.markdown(f"**Description:** {description}")
+        
         st.markdown(f"**Created By:** {client.get('created_by', '-')}")
         st.markdown(f"**Created At:** {client.get('created_at', '-')}")
         if project_count > 0:
@@ -110,7 +116,6 @@ class ClientsFrontend:
             st.session_state.confirm_delete_client[confirm_key] = False
             st.rerun()
 
-
     def _render_delete_confirmation(self, cid, project_count, confirm_key):
         """Render delete confirmation dialog"""
         if project_count > 0:
@@ -123,6 +128,7 @@ class ClientsFrontend:
             # Only show Yes/No buttons when there are no projects
             st.warning("Are you sure you want to delete this client?")
             self._render_confirmation_actions(cid, confirm_key)
+    
     def show_create_form(self):
         """Display the create client form"""
         st.title("➕ Create Client")
@@ -132,11 +138,11 @@ class ClientsFrontend:
             navigate_to_view("dashboard")
 
         # Form fields
-        name, email, company, spoc_name, phone_number = self._render_client_form()
+        name, email, company, spoc_name, phone_number, description = self._render_client_form()
 
         # Submit button
         if st.button("✅ Create Client"):
-            self._handle_create_client(name, email, company, spoc_name, phone_number)
+            self._handle_create_client(name, email, company, spoc_name, phone_number, description)
     
     def show_edit_form(self):
         """Display the edit client form"""
@@ -158,16 +164,15 @@ class ClientsFrontend:
         self._show_edit_warning(client)
 
         # Form fields with current values
-        name, email, company, spoc_name, phone_number = self._render_client_form(client)
+        name, email, company, spoc_name, phone_number, description = self._render_client_form(client)
 
         # Submit button
         if st.button("💾 Save Changes"):
-            self._handle_update_client(cid, name, email, company, spoc_name, phone_number)
+            self._handle_update_client(cid, name, email, company, spoc_name, phone_number, description)
     
     def _render_client_form(self, client=None):
         """Render client form fields"""
         # Basic Information Section
-        st.subheader("📋 Basic Information")
         name = st.text_input(
             "Client Name *", 
             value=client.get("client_name", "") if client else "",
@@ -196,7 +201,16 @@ class ClientsFrontend:
             placeholder="Enter phone number"
         )
         
-        return name, email, company, spoc_name, phone_number
+        # Description Section
+        description = st.text_area(
+            "Description",
+            value=client.get("description", "") if client else "",
+            placeholder="Enter client description, notes, or additional information...",
+            height=100,
+            help="Optional field for additional client information, notes, or special requirements"
+        )
+        
+        return name, email, company, spoc_name, phone_number, description
     
     def _show_edit_warning(self, client):
         """Show warning about related projects when editing"""
@@ -206,7 +220,7 @@ class ClientsFrontend:
         if project_count > 0:
             st.info(f"⚠️ This client has {project_count} associated project(s). Changing the name will update all related projects.")
     
-    def _handle_create_client(self, name, email, company, spoc_name, phone_number):
+    def _handle_create_client(self, name, email, company, spoc_name, phone_number, description):
         """Handle client creation"""
         # Validate required fields
         errors = validate_client_data(name, email, company)
@@ -223,13 +237,13 @@ class ClientsFrontend:
         
         # Create client
         username = st.session_state.get("username", "unknown")
-        client_data = create_client_data(name, email, company, spoc_name, phone_number, username)
+        client_data = create_client_data(name, email, company, spoc_name, phone_number, username, description)
         
         if self.backend.save_client(client_data):
             st.success("Client created successfully!")
             navigate_to_view("dashboard")
     
-    def _handle_update_client(self, cid, name, email, company, spoc_name, phone_number):
+    def _handle_update_client(self, cid, name, email, company, spoc_name, phone_number, description):
         """Handle client update"""
         # Validate required fields
         errors = validate_client_data(name, email, company)
@@ -245,7 +259,7 @@ class ClientsFrontend:
             return
         
         # Update client
-        updated_data = create_update_data(name, email, company, spoc_name, phone_number)
+        updated_data = create_update_data(name, email, company, spoc_name, phone_number, description)
         
         if self.backend.update_client(cid, updated_data):
             st.success("Client updated successfully!")
