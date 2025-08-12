@@ -15,7 +15,7 @@ class DashboardComponents:
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            if st.button("🔄 Extract Logs", key="dashboard_extract_logs_btn", type="primary", help="Extract assignments from projects"):
+            if st.button("🔄 Extract Logs", key="dashboard_extract_logs_btn", help="Extract assignments from projects"):
                 with st.spinner("Extracting assignments from projects..."):
                     try:
                         logs_created = self.log_manager.extract_and_create_logs()

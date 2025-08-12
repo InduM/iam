@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from streamlit_modal import Modal
-from bson import ObjectId
 from utils.utils_log import format_status_badge, format_priority_badge
 
 
@@ -11,97 +10,216 @@ class VerificationComponents:
         self.log_manager = log_manager
 
     def render_verification_tab(self):
-        """Enhanced verification tab with batch processing"""
+        """Enhanced verification tab with batch processing and undo functionality"""
         st.subheader("✅ Pending Verification")
         
         try:
             pending_logs = list(self.log_manager.logs.find({"status": "Pending Verification"}))
+            recently_verified = list(self.log_manager.logs.find({
+                "status": "Completed", 
+                "verified": True,
+                "verified_at": {"$exists": True}
+            }).sort("verified_at", -1).limit(20))  # Last 20 verified tasks
         except Exception as e:
-            st.error(f"❌ Error fetching pending logs: {str(e)}")
+            st.error(f"❌ Error fetching logs: {str(e)}")
             return
             
         if len(pending_logs) == 0:
             st.success("No tasks pending verification.")
-            return
-
-        # Verification stats
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Pending Tasks", len(pending_logs))
-        with col2:
-            users_count = len(set(log['assigned_user'] for log in pending_logs))
-            st.metric("Users Involved", users_count)
-        with col3:
-            projects_count = len(set(log['project_name'] for log in pending_logs))
-            st.metric("Projects Affected", projects_count)
-
-        # Batch verification
-        with st.expander("⚡ Batch Verification", expanded=False):
-            col1, col2 = st.columns(2)
+        else:
+            # Verification stats
+            col1, col2, col3 = st.columns(3)
             with col1:
-                if st.button("✅ Verify All", key="batch_verify_all", type="primary"):
-                    if st.checkbox("⚠️ Confirm batch verification", key="batch_verify_confirm"):
-                        verified_count = self._batch_verify_tasks(pending_logs)
-                        st.success(f"✅ Verified {verified_count} tasks!")
-                        st.rerun()
+                st.metric("Pending Tasks", len(pending_logs))
             with col2:
-                selected_user = st.selectbox("Verify by User", key="batch_verify_user_select",
-                                        options=["Select User"] + list(set(log['assigned_user'] for log in pending_logs)))
-                if selected_user != "Select User":
-                    user_tasks = [log for log in pending_logs if log['assigned_user'] == selected_user]
-                    if st.button(f"✅ Verify {selected_user}'s Tasks ({len(user_tasks)})", key=f"batch_verify_user_{selected_user}"):
-                        verified_count = self._batch_verify_tasks(user_tasks)
-                        st.success(f"✅ Verified {verified_count} tasks for {selected_user}!")
-                        st.rerun()
+                users_count = len(set(log['assigned_user'] for log in pending_logs))
+                st.metric("Users Involved", users_count)
+            with col3:
+                projects_count = len(set(log['project_name'] for log in pending_logs))
+                st.metric("Projects Affected", projects_count)
 
-        # Individual verification
-        st.divider()
-        st.markdown("### Individual Verification")
-        
-        # Enhanced verification table
-        try:
-            df = pd.DataFrame([
-                {
-                    "Project": log["project_name"],
-                    "Member": log["assigned_user"],
-                    "Stage": log["stage_name"],
-                    "Substage": log["substage_name"],
-                    "Completed At": self._format_datetime(log.get("completed_clicked_at")),
-                    "Priority": log.get("priority", "Medium"),
-                    "ID": str(log["_id"])
-                }
-                for log in pending_logs
-            ])
-            
-            st.dataframe(df.drop('ID', axis=1), use_container_width=True)
-        except Exception as e:
-            st.error(f"❌ Error creating verification table: {str(e)}")
-
-        # Individual verification controls
-        for i, log in enumerate(pending_logs):
-            with st.container():
-                col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
-                
+            # Batch verification
+            with st.expander("⚡ Batch Verification", expanded=False):
+                col1, col2 = st.columns(2)
                 with col1:
-                    st.write(f"**{log['project_name']}**")
-                with col2:
-                    st.write(f"👤 {log['assigned_user']}")
-                with col3:
-                    st.write(f"📋 {log['substage_name']}")
-                with col4:
-                    priority_badge = format_priority_badge(log.get('priority', 'Medium'))
-                    st.markdown(priority_badge, unsafe_allow_html=True)
-                with col5:
-                    if st.button("✅", key=f"verify_individual_{log['_id']}", help="Verify this task"):
-                        try:
-                            self._verify_task_completion_with_timestamp(log)
-                            st.success(f"✅ Verified: {log['substage_name']}")
+                    if st.button("✅ Verify All", key="batch_verify_all", type="primary"):
+                        if st.checkbox("⚠️ Confirm batch verification", key="batch_verify_confirm"):
+                            verified_count = self._batch_verify_tasks(pending_logs)
+                            st.success(f"✅ Verified {verified_count} tasks!")
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Verification failed: {str(e)}")
+                with col2:
+                    selected_user = st.selectbox("Verify by User", key="batch_verify_user_select",
+                                            options=["Select User"] + list(set(log['assigned_user'] for log in pending_logs)))
+                    if selected_user != "Select User":
+                        user_tasks = [log for log in pending_logs if log['assigned_user'] == selected_user]
+                        if st.button(f"✅ Verify {selected_user}'s Tasks ({len(user_tasks)})", key=f"batch_verify_user_{selected_user}"):
+                            verified_count = self._batch_verify_tasks(user_tasks)
+                            st.success(f"✅ Verified {verified_count} tasks for {selected_user}!")
+                            st.rerun()
+
+            # Individual verification
+            st.divider()
+            st.markdown("### Individual Verification")
+            
+            # Enhanced verification table
+            try:
+                df = pd.DataFrame([
+                    {
+                        "Project": log["project_name"],
+                        "Member": log["assigned_user"],
+                        "Stage": log["stage_name"],
+                        "Substage": log["substage_name"],
+                        "Completed At": self._format_datetime(log.get("completed_clicked_at")),
+                        "Priority": log.get("priority", "Medium"),
+                        "ID": str(log["_id"])
+                    }
+                    for log in pending_logs
+                ])
                 
-                if i < len(pending_logs) - 1:
-                    st.divider()
+                st.dataframe(df.drop('ID', axis=1), use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ Error creating verification table: {str(e)}")
+
+            # Individual verification controls
+            for i, log in enumerate(pending_logs):
+                with st.container():
+                    col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
+                    
+                    with col1:
+                        st.write(f"**{log['project_name']}**")
+                    with col2:
+                        st.write(f"👤 {log['assigned_user']}")
+                    with col3:
+                        st.write(f"📋 {log['substage_name']}")
+                    with col4:
+                        priority_badge = format_priority_badge(log.get('priority', 'Medium'))
+                        st.markdown(priority_badge, unsafe_allow_html=True)
+                    with col5:
+                        if st.button("✅", key=f"verify_individual_{log['_id']}", help="Verify this task"):
+                            try:
+                                self._verify_task_completion_with_timestamp(log)
+                                st.success(f"✅ Verified: {log['substage_name']}")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Verification failed: {str(e)}")
+                    
+                    if i < len(pending_logs) - 1:
+                        st.divider()
+
+        # Recently Verified Tasks with Undo Option
+        if recently_verified:
+            st.divider()
+            st.subheader("🔄 Recently Verified Tasks")
+            st.caption("Last 20 verified tasks - you can undo verification if needed")
+            
+            with st.expander("📋 Recently Verified Tasks", expanded=False):
+                # Batch undo option
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Undo All Recent Verifications", key="batch_undo_all", type="secondary"):
+                        if st.checkbox("⚠️ Confirm batch undo", key="batch_undo_confirm"):
+                            undone_count = self._batch_undo_verifications(recently_verified)
+                            st.warning(f"🔄 Undone {undone_count} verifications!")
+                            st.rerun()
+                with col2:
+                    selected_user_undo = st.selectbox("Undo by User", key="batch_undo_user_select",
+                                                options=["Select User"] + list(set(log['assigned_user'] for log in recently_verified)))
+                    if selected_user_undo != "Select User":
+                        user_verified_tasks = [log for log in recently_verified if log['assigned_user'] == selected_user_undo]
+                        if st.button(f"🔄 Undo {selected_user_undo}'s Verifications ({len(user_verified_tasks)})", key=f"batch_undo_user_{selected_user_undo}"):
+                            undone_count = self._batch_undo_verifications(user_verified_tasks)
+                            st.warning(f"🔄 Undone {undone_count} verifications for {selected_user_undo}!")
+                            st.rerun()
+
+                # Individual undo controls
+                for i, log in enumerate(recently_verified):
+                    with st.container():
+                        col1, col2, col3, col4, col5, col6 = st.columns([2, 2, 2, 1.5, 1.5, 1])
+                        
+                        with col1:
+                            st.write(f"**{log['project_name']}**")
+                        with col2:
+                            st.write(f"👤 {log['assigned_user']}")
+                        with col3:
+                            st.write(f"📋 {log['substage_name']}")
+                        with col4:
+                            st.write(f"🔍 {self._format_datetime(log.get('verified_at'))}")
+                        with col5:
+                            status_badge = format_status_badge(log.get('status', 'Unknown'))
+                            st.markdown(status_badge, unsafe_allow_html=True)
+                        with col6:
+                            if st.button("🔄", key=f"undo_individual_{log['_id']}", help="Undo verification"):
+                                try:
+                                    self._undo_task_verification(log)
+                                    st.warning(f"🔄 Undone verification: {log['substage_name']}")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Undo failed: {str(e)}")
+                        
+                        if i < len(recently_verified) - 1:
+                            st.divider()
+
+
+    def _undo_task_verification(self, log):
+        """Undo verification for a specific task, reverting it to Pending Verification status"""
+        try:
+            project_id = log["project_id"]
+            stage_key = log["stage_key"]
+            substage_id = log.get("substage_id")
+            current_time = datetime.now()
+
+            if substage_id:
+                # Undo verification for all logs of the same substage
+                self.log_manager.logs.update_many(
+                    {"project_id": project_id, "stage_key": stage_key, "substage_id": substage_id},
+                    {"$set": {
+                        "is_completed": False,
+                        "status": "Pending Verification",
+                        "verified": False,
+                        "updated_at": current_time
+                    },
+                    "$unset": {
+                        "verified_at": "",
+                        "completed_at": ""
+                    }}
+                )
+            else:
+                # Stage-level log: undo verification for all logs of this stage
+                self.log_manager.logs.update_many(
+                    {"project_id": project_id, "stage_key": stage_key},
+                    {"$set": {
+                        "is_completed": False,
+                        "status": "Pending Verification",
+                        "verified": False,
+                        "updated_at": current_time
+                    },
+                    "$unset": {
+                        "verified_at": "",
+                        "completed_at": ""
+                    }}
+                )
+
+            # Recalculate and update stage completion status
+            self.log_manager.update_stage_completion_status(project_id, stage_key)
+
+            # Set session state to stay on verification tab
+            st.session_state.active_tab = 2  # Verification tab index
+        except Exception as e:
+            st.error(f"❌ Failed to undo task verification: {str(e)}")
+            raise
+    
+    def _batch_undo_verifications(self, tasks):
+        """Undo verification for multiple tasks at once"""
+        undone_count = 0
+        for task in tasks:
+            try:
+                self._undo_task_verification(task)
+                undone_count += 1
+            except Exception as e:
+                st.error(f"❌ Failed to undo verification for task {task.get('substage_name', 'Unknown')}: {str(e)}")
+        # Set session state to stay on verification tab
+        st.session_state.active_tab = 2  # Verification tab index
+        return undone_count
 
     def _batch_verify_tasks(self, tasks):
         """Verify multiple tasks at once"""
@@ -112,6 +230,8 @@ class VerificationComponents:
                 verified_count += 1
             except Exception as e:
                 st.error(f"❌ Failed to verify task {task.get('substage_name', 'Unknown')}: {str(e)}")
+        # Set session state to stay on verification tab
+        st.session_state.active_tab = 2  # Verification tab index
         return verified_count
 
     def _verify_task_completion_with_timestamp(self, log):
@@ -149,6 +269,8 @@ class VerificationComponents:
 
             # Recalculate and update stage completion
             self.log_manager.update_stage_completion_status(project_id, stage_key)
+            # Set session state to stay on verification tab
+            st.session_state.active_tab = 2  # Verification tab index
         except Exception as e:
             st.error(f"❌ Failed to verify task completion: {str(e)}")
             raise

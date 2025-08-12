@@ -1,14 +1,7 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from backend.log_backend import ProjectLogManager
-from utils.utils_log import format_status_badge, format_priority_badge
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
-from streamlit_modal import Modal
-from bson import ObjectId
-import plotly.express as px
-import plotly.graph_objects as go
-
 
 class ProjectLogFrontend:
     def __init__(self):
@@ -96,7 +89,7 @@ class ProjectLogFrontend:
             return 0
 
     def run(self):
-        """Main application runner with enhanced error handling"""
+        """Main application runner with enhanced error handling and tab persistence"""
         if not self.log_manager.client:
             st.error("❌ Cannot proceed without database connection")
             with st.expander("🔧 Database Connection Debug"):
@@ -125,34 +118,50 @@ class ProjectLogFrontend:
                 verification = VerificationComponents(self.log_manager)
                 task_mgmt = TaskManagementComponents(self.log_manager)
 
-                tab_dashboard, tab_user_logs, tab_verification, tab_logs = st.tabs([
-                    "📊 Dashboard", "👤 Task Management", verification_tab_label, "Logs"
-                ])
+                # Set default active tab based on session state
+                if 'active_tab' not in st.session_state:
+                    st.session_state.active_tab = 0
                 
-                with tab_dashboard:
+                # Create tabs with proper indexing
+                tab_names = ["📊 Dashboard", "👤 Task Management", verification_tab_label, "Logs"]
+                selected_tab = st.selectbox(
+                    "Select Tab", 
+                    options=range(len(tab_names)), 
+                    format_func=lambda x: tab_names[x],
+                    index=st.session_state.active_tab,
+                    key="main_tab_selector",
+                    label_visibility="collapsed"
+                )
+                
+                # Update session state when tab changes
+                if selected_tab != st.session_state.active_tab:
+                    st.session_state.active_tab = selected_tab
+                    st.rerun()
+                
+                # Render content based on selected tab
+                if selected_tab == 0:  # Dashboard
                     try:
                         dashboard.render_dashboard_tab()
                     except Exception as e:
                         st.error(f"❌ Dashboard error: {str(e)}")
                         st.exception(e)
                 
-                with tab_user_logs:
+                elif selected_tab == 1:  # Task Management
                     try:
                         task_mgmt.render_user_logs_tab(is_admin=True)
                     except Exception as e:
                         st.error(f"❌ Task management error: {str(e)}")
                         st.exception(e)
                 
-                with tab_verification:
+                elif selected_tab == 2:  # Verification
                     try:
                         verification.render_verification_tab()
                     except Exception as e:
                         st.error(f"❌ Verification error: {str(e)}")
                         st.exception(e)
                 
-                with tab_logs:
+                elif selected_tab == 3:  # Logs
                     try:
-                        # Use different context for logs tab to avoid conflicts
                         task_mgmt.render_user_logs_tab(is_admin=False)
                     except Exception as e:
                         st.error(f"❌ User interface error: {str(e)}")
@@ -160,7 +169,7 @@ class ProjectLogFrontend:
             else:
                 # Regular user interface
                 try:
-                    from task_management_components import TaskManagementComponents
+                    from pages2.task_management_components import TaskManagementComponents
                     task_mgmt = TaskManagementComponents(self.log_manager)
                     task_mgmt.render_user_logs_tab(is_admin=False)
                 except Exception as e:
@@ -171,7 +180,7 @@ class ProjectLogFrontend:
             st.error(f"❌ Application error: {str(e)}")
             st.exception(e)
 
-
+            
 def run():
     try:
         app = ProjectLogFrontend()
