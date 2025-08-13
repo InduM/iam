@@ -3,8 +3,7 @@ import pandas as pd
 from datetime import datetime
 from streamlit_modal import Modal
 from utils.utils_log import format_status_badge, format_priority_badge
-from bson import ObjectId  # Add this import
-
+from bson import ObjectId 
 
 class VerificationComponents:
     def __init__(self, log_manager):

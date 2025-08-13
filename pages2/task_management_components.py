@@ -310,15 +310,10 @@ class TaskManagementComponents:
     def _render_user_task_cards(self, user_logs):
         """Render user tasks as cards grouped into Overdue, Current, and Upcoming."""
         try:
-            # Apply sorting first
             user_logs = self._sort_logs(user_logs)
-
             today = datetime.today().date()
-            overdue_tasks = []
-            current_tasks = []
-            upcoming_tasks = []
+            overdue_tasks, current_tasks, upcoming_tasks = [], [], []
 
-            # Group logs
             for log in user_logs:
                 deadline_str = log.get("substage_deadline") or log.get("stage_deadline") or ""
                 try:
@@ -333,7 +328,6 @@ class TaskManagementComponents:
                 else:
                     current_tasks.append(log)
 
-            # Helper to render a group
             def render_group(title, tasks, color):
                 if tasks:
                     st.markdown(f"### {title}")
@@ -369,29 +363,19 @@ class TaskManagementComponents:
                                 unsafe_allow_html=True
                             )
 
-                            # Action buttons
-                            col1, col2, col3 = st.columns([1, 1, 2])
-                            with col1:
-                                if log.get('status') == "Pending Verification":
-                                    st.info("⏳ Awaiting Verification")
-                                elif not log.get('is_completed', False):
-                                    if st.button("✅ Complete", key=f"complete_{log['_id']}"):
-                                        try:
-                                            self._mark_task_for_verification(str(log['_id']))
-                                            st.success("⏳ Task marked for verification!")
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"❌ Failed to complete task: {str(e)}")
+                            # ✅ Now render task actions under each card
+                            self._render_task_actions(log, context="user")
+
                         except Exception as e:
                             st.error(f"❌ Error rendering task card: {str(e)}")
 
-            # Render each section
             render_group("Overdue Tasks", overdue_tasks, "#f44336")
             render_group("Current Tasks", current_tasks, "#4caf50")
             render_group("Upcoming Tasks", upcoming_tasks, "#2196f3")
 
         except Exception as e:
             st.error(f"❌ Error preparing user task cards: {str(e)}")
+
 
     def _render_task_table(self, logs, context="default"):
         """Enhanced task table with better functionality, error handling, sorting, and manager restriction."""
@@ -425,10 +409,13 @@ class TaskManagementComponents:
                     "Deadline": self._format_date(log.get("substage_deadline", log.get("stage_deadline"))),
                     "Completed": "✅ Yes" if log.get("is_completed") else "❌ No",
                     "Updated": self._format_datetime(log.get("updated_at")),
+                    # ✅ Add rejection reason column
+                    "Rejection Reason": log.get("extension_rejection_notes", ""),
                     "ID": str(log["_id"])
                 }
                 for log in logs
             ])
+
 
             gb = GridOptionsBuilder.from_dataframe(df.drop('ID', axis=1))
             gb.configure_pagination(paginationAutoPageSize=True, paginationPageSize=20)
@@ -884,3 +871,101 @@ class TaskManagementComponents:
         except Exception as e:
             st.error(f"❌ Failed to update project stage completion: {str(e)}")
             raise
+
+    def _render_task_actions(self, log, context="default"):
+        """Render task action buttons with deadline extension"""
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        # ✅ Complete button
+        with col1:
+            if log.get("status") != "Completed" and log.get("status") != "Pending Deadline Approval":
+                if st.button("✅ Complete", key=f"complete_btn_{log['_id']}_{context}"):
+                    if self.log_manager.mark_task_completed(str(log["_id"]), st.session_state.get("username", "Unknown")):
+                        st.success("✅ Task marked as completed!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to complete task")
+        
+        # ⏰ Extend Deadline button — always to the right of Complete
+        with col2:
+            task_status = log.get("status")
+            current_task_statuses = ["In Progress", "Overdue", "Upcoming"]
+            if (task_status != "Completed" and 
+                task_status in current_task_statuses and 
+                task_status not in ["Pending Deadline Approval", "Pending Verification"]):
+                if st.button("⏰ Extend Deadline", key=f"extend_deadline_btn_{log['_id']}_{context}"):
+                    st.session_state[f"show_extension_form_{log['_id']}"] = True
+                    st.rerun()
+        
+        # Show status message for pending deadline approval
+        if log.get("status") == "Pending Deadline Approval":
+            st.info("⏳ Deadline extension request is pending admin approval")
+        
+                # Show rejection reason if present
+        if log.get("extension_rejection_notes"):
+            st.error(f"❌ Deadline extension request was rejected: {log['extension_rejection_notes']}")
+        
+        # Show deadline extension form if requested
+        if st.session_state.get(f"show_extension_form_{log['_id']}", False):
+            self._render_deadline_extension_form(log, context)
+
+    def _render_deadline_extension_form(self, log, context="default"):
+        """Render deadline extension request form"""
+        with st.container():
+            st.markdown("---")
+            st.subheader("🔄 Request Deadline Extension")
+            
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.write(f"**Current Deadline:** {self._format_date(log.get('substage_deadline', log.get('stage_deadline')))}")
+            
+            with col2:
+                st.write(f"**Task:** {log['stage_name']} → {log['substage_name']}")
+            
+            extension_reason = st.text_area(
+                "Reason for Extension:",
+                key=f"extension_reason_{log['_id']}_{context}",
+                placeholder="Please provide a detailed reason for the deadline extension request...",
+                height=100
+            )
+            
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                if st.button("📤 Submit Request", key=f"submit_extension_{log['_id']}_{context}"):
+                    if extension_reason.strip():
+                        username = st.session_state.get("username", "Unknown")
+                        if self.log_manager.request_deadline_extension(str(log["_id"]), extension_reason, username):
+                            st.success("✅ Deadline extension request submitted!")
+                            st.session_state[f"show_extension_form_{log['_id']}"] = False
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to submit extension request")
+                    else:
+                        st.error("❌ Please provide a reason for the extension")
+            
+            with col2:
+                if st.button("❌ Cancel", key=f"cancel_extension_{log['_id']}_{context}"):
+                    st.session_state[f"show_extension_form_{log['_id']}"] = False
+                    st.rerun()
+
+    def _format_date(self, date_str):
+        """Format date string for display with improved error handling"""
+        if not date_str or date_str in ['1970-01-01 00:00:00', None, '']:
+            return "Not Set"
+        try:
+            if isinstance(date_str, str):
+                # Try different date formats
+                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%d/%m/%Y']:
+                    try:
+                        dt = datetime.strptime(date_str, fmt)
+                        return dt.strftime('%Y-%m-%d')
+                    except ValueError:
+                        continue
+                return str(date_str)
+            elif isinstance(date_str, datetime):
+                return date_str.strftime('%Y-%m-%d')
+            return str(date_str)
+        except Exception:
+            return "Invalid Date"

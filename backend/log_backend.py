@@ -340,3 +340,127 @@ class ProjectLogManager:
         except Exception as e:
             st.error(f"Error fetching overview: {str(e)}")
             return {}
+
+    def request_deadline_extension(self, log_id, extension_reason, requested_by):
+        """Request deadline extension for a task"""
+        try:
+            result = self.logs.update_one(
+                {"_id": ObjectId(log_id)},
+                {
+                    "$set": {
+                        "status": "Pending Deadline Approval",
+                        "extension_reason": extension_reason,
+                        "extension_requested_by": requested_by,
+                        "extension_requested_at": datetime.now(),
+                        "updated_at": datetime.now()
+                    }
+                }
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            st.error(f"Error requesting deadline extension: {str(e)}")
+            return False
+
+    def approve_deadline_extension(self, log_id, new_deadline, approved_by, approval_notes=""):
+        """Approve deadline extension request"""
+        try:
+            # Parse the new deadline
+            if isinstance(new_deadline, str):
+                new_deadline = datetime.strptime(new_deadline, '%Y-%m-%d')
+            
+            result = self.logs.update_one(
+                {"_id": ObjectId(log_id)},
+                {
+                    "$set": {
+                        "status": "In Progress",
+                        "substage_deadline": new_deadline.strftime('%Y-%m-%d'),
+                        "extension_approved_by": approved_by,
+                        "extension_approved_at": datetime.now(),
+                        "extension_approval_notes": approval_notes,
+                        "updated_at": datetime.now()
+                    },
+                    "$unset": {
+                        "extension_reason": "",
+                        "extension_requested_by": "",
+                        "extension_requested_at": ""
+                    }
+                }
+            )
+            
+            # Also update the project structure if it's a substage
+            log_entry = self.logs.find_one({"_id": ObjectId(log_id)})
+            if log_entry and log_entry.get("substage_id"):
+                project_id = log_entry["project_id"]
+                stage_key = log_entry["stage_key"]
+                substage_id = log_entry["substage_id"]
+                
+                project = self.projects.find_one({"_id": project_id})
+                if project:
+                    substages = project.get("stage_assignments", {}).get(stage_key, {}).get("substages", [])
+                    substage_index = next((i for i, s in enumerate(substages) if s.get('id') == substage_id), None)
+                    if substage_index is not None:
+                        self.projects.update_one(
+                            {"_id": project_id},
+                            {"$set": {
+                                f"stage_assignments.{stage_key}.substages.{substage_index}.deadline": new_deadline.strftime('%Y-%m-%d'),
+                                "updated_at": datetime.now().isoformat()
+                            }}
+                        )
+            
+            return result.modified_count > 0
+        except Exception as e:
+            st.error(f"Error approving deadline extension: {str(e)}")
+            return False
+
+    def reject_deadline_extension(self, log_id, rejected_by, rejection_notes=""):
+        """Reject deadline extension request"""
+        try:
+            result = self.logs.update_one(
+                {"_id": ObjectId(log_id)},
+                {
+                    "$set": {
+                        "status": "In Progress",  # Revert to previous status
+                        "extension_rejected_by": rejected_by,
+                        "extension_rejected_at": datetime.now(),
+                        "extension_rejection_notes": rejection_notes,
+                        "updated_at": datetime.now()
+                    },
+                    "$unset": {
+                        "extension_reason": "",
+                        "extension_requested_by": "",
+                        "extension_requested_at": ""
+                    }
+                }
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            st.error(f"Error rejecting deadline extension: {str(e)}")
+            return False
+
+    def get_deadline_extension_requests(self):
+        """Get all pending deadline extension requests"""
+        try:
+            return list(self.logs.find({"status": "Pending Deadline Approval"}).sort("extension_requested_at", -1))
+        except Exception as e:
+            st.error(f"Error fetching deadline extension requests: {str(e)}")
+            return []
+
+    def mark_task_completed(self, log_id: str, completed_by: str) -> bool:
+        """Mark a single task as completed (for user interface)"""
+        try:
+            result = self.logs.update_one(
+                {"_id": ObjectId(log_id)},
+                {
+                    "$set": {
+                        "is_completed": True,
+                        "status": "Pending Verification",  # Changed from "Completed" to require admin verification
+                        "completed_by": completed_by,
+                        "completed_at": datetime.now(),
+                        "updated_at": datetime.now()
+                    }
+                }
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            st.error(f"Error marking task completed: {str(e)}")
+            return False

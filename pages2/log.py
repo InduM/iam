@@ -88,6 +88,8 @@ class ProjectLogFrontend:
             st.error(f"❌ Cleanup failed: {str(e)}")
             return 0
 
+    # ==== UPDATED LOG.PY MAIN APPLICATION ====
+
     def run(self):
         """Main application runner with enhanced error handling and tab interface"""
         if not self.log_manager.client:
@@ -105,24 +107,32 @@ class ProjectLogFrontend:
                 try:
                     pending_count = self.log_manager.logs.count_documents({"status": "Pending Verification"})
                     verification_tab_label = f"✅ Verification ({pending_count})" if pending_count > 0 else "✅ Verification"
+                    
+                    # Get deadline extension requests count
+                    deadline_count = self.log_manager.logs.count_documents({"status": "Pending Deadline Approval"})
+                    deadline_tab_label = f"⏰ Deadlines ({deadline_count})" if deadline_count > 0 else "⏰ Deadlines"
                 except Exception as e:
-                    st.warning(f"⚠️ Could not fetch pending count: {str(e)}")
+                    st.warning(f"⚠️ Could not fetch pending counts: {str(e)}")
                     verification_tab_label = "✅ Verification"
+                    deadline_tab_label = "⏰ Deadlines"
 
                 # Import here to avoid circular imports
                 from pages2.dashboard_components import DashboardComponents
                 from pages2.verification_components import VerificationComponents, TaskModalComponents
                 from pages2.task_management_components import TaskManagementComponents
+                from pages2.deadline_components import DeadlineComponents
                 
                 dashboard = DashboardComponents(self.log_manager)
                 verification = VerificationComponents(self.log_manager)
                 task_mgmt = TaskManagementComponents(self.log_manager)
+                deadline_mgmt = DeadlineComponents(self.log_manager)
 
-                # Create tabs using st.tabs()
-                tab1, tab2, tab3, tab4 = st.tabs([
+                # Create tabs using st.tabs() - Added new deadline tab
+                tab1, tab2, tab3, tab4, tab5 = st.tabs([
                     "📊 Dashboard", 
                     "👤 Task Management", 
                     verification_tab_label, 
+                    deadline_tab_label,
                     "📋 Logs"
                 ])
                 
@@ -150,8 +160,16 @@ class ProjectLogFrontend:
                         st.error(f"❌ Verification error: {str(e)}")
                         st.exception(e)
                 
-                # Logs Tab
+                # NEW: Deadline Tab
                 with tab4:
+                    try:
+                        deadline_mgmt.render_deadline_tab()
+                    except Exception as e:
+                        st.error(f"❌ Deadline management error: {str(e)}")
+                        st.exception(e)
+                
+                # Logs Tab
+                with tab5:
                     try:
                         task_mgmt.render_user_logs_tab(is_admin=False)
                     except Exception as e:
