@@ -70,7 +70,9 @@ def show_dashboard():
 
 
 def show_create_form():
-    initialize_create_form_state()
+    if not st.session_state.get("create_initialized", False):
+        initialize_create_form_state()
+        st.session_state.create_initialized = True
     _render_back_button()
     template_options = ["Custom Template"] + list(TEMPLATES.keys())
     selected = st.selectbox("📂 Select Template (optional)", template_options, index=0 if not st.session_state.selected_template else None)
@@ -201,6 +203,7 @@ def _render_back_button():
         # NEW: Clean up edit mode before navigating
         _handle_edit_navigation_cleanup()
         st.session_state.view = "dashboard"
+        st.session_state.create_initialized = False
         st.rerun()
 
 def _apply_filters(projects, search_query, filter_template, filter_level, filter_due):
