@@ -149,3 +149,15 @@ class ClientsBackend:
         
         # Proceed with deletion
         return self.delete_client(cid)
+
+    def get_related_project_names(self, client_name):
+        """Return a list of project names linked to the given client"""
+        try:
+            projects = self.projects_collection.find(
+                {"client": client_name},
+                {"name": 1, "_id": 0}  # Only return the 'name' field
+            )
+            return [p.get("name", "Unnamed Project") for p in projects]
+        except Exception as e:
+            st.error(f"Error fetching related projects: {e}")
+            return []

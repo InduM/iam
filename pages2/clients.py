@@ -60,16 +60,25 @@ class ClientsFrontend:
         st.markdown(f"**SPOC Name:** {client.get('spoc_name', '-')}")
         st.markdown(f"**Phone Number:** {client.get('phone_number', '-')}")
         
-        # Display description if it exists
         description = client.get('description', '')
         if description:
             st.markdown(f"**Description:** {description}")
         
         st.markdown(f"**Created By:** {client.get('created_by', '-')}")
         st.markdown(f"**Created At:** {client.get('created_at', '-')}")
+        
         if project_count > 0:
-            st.markdown(f"**Related Projects:** {project_count}")
-    
+            # ✅ Get project names from backend
+            project_names = self.backend.get_related_project_names(client.get("client_name", ""))
+            tooltip_text = "\n,".join(project_names) if project_names else "No projects found"
+            
+            # Display with hover tooltip
+            st.markdown(
+                f"**Related Projects:** {project_count}",
+                help=tooltip_text
+            )
+
+
     def _render_client_actions(self, client, cid, project_count):
         """Render action buttons for client card"""
         col1, col2 = st.columns(2)

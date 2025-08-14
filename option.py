@@ -66,15 +66,15 @@ else:
         if st.session_state["role"] == "admin":
             selected = option_menu(
                 None,
-                ["Profile", "Documents","Log","Users","Projects","Clients","Logout"],
-                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","box-arrow-right"],
+                ["Profile", "Documents","Log","Users","Projects","Clients","Opportunity","Logout"],
+                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","bi-gem","box-arrow-right"],
                 default_index=0
             )
         if st.session_state["role"] == "manager":
             selected = option_menu(
                 None,
-                ["Profile", "Documents","Log","Users","Projects","Clients","Logout"],
-                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","box-arrow-right"],
+                ["Profile", "Documents","Log","Users","Projects","Clients","Opportunity","Logout"],
+                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","bi-gem","box-arrow-right"],
                 default_index=0
             )
     # Detect tab switch and trigger rerun for fresh data
