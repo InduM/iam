@@ -32,6 +32,7 @@ class DeadlineComponents:
                 "Requested By": req["extension_requested_by"],
                 "Requested At": self._format_datetime(req["extension_requested_at"]),
                 "Reason": req["extension_reason"][:50] + "..." if len(req["extension_reason"]) > 50 else req["extension_reason"],
+                "Request Count": req.get("extension_request_count", 1),
                 "ID": str(req["_id"])
             }
             for req in extension_requests
@@ -43,6 +44,8 @@ class DeadlineComponents:
         gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
         gb.configure_selection('multiple', use_checkbox=True)
         gb.configure_column("Reason", wrapText=True, autoHeight=True)
+        gb.configure_column("Request Count", sortable=True, width=130)
+
         gridOptions = gb.build()
         
         grid_response = AgGrid(

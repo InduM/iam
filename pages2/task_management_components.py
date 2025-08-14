@@ -427,6 +427,7 @@ class TaskManagementComponents:
             gb.configure_column("Completed", width=100)
             gb.configure_column("Project", width=200)
             gb.configure_column("User", width=120)
+            gb.configure_column("Rejection Reason", wrapText=True, autoHeight=True, width=250)
 
             gridOptions = gb.build()
             gridOptions['rowHeight'] = 40
@@ -878,7 +879,7 @@ class TaskManagementComponents:
         
         # ✅ Complete button
         with col1:
-            if log.get("status") != "Completed" and log.get("status") != "Pending Deadline Approval":
+            if log.get("status") != "Completed":
                 if st.button("✅ Complete", key=f"complete_btn_{log['_id']}_{context}"):
                     if self.log_manager.mark_task_completed(str(log["_id"]), st.session_state.get("username", "Unknown")):
                         st.success("✅ Task marked as completed!")
@@ -896,10 +897,6 @@ class TaskManagementComponents:
                 if st.button("⏰ Extend Deadline", key=f"extend_deadline_btn_{log['_id']}_{context}"):
                     st.session_state[f"show_extension_form_{log['_id']}"] = True
                     st.rerun()
-        
-        # Show status message for pending deadline approval
-        if log.get("status") == "Pending Deadline Approval":
-            st.info("⏳ Deadline extension request is pending admin approval")
         
                 # Show rejection reason if present
         if log.get("extension_rejection_notes"):

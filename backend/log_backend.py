@@ -353,6 +353,14 @@ class ProjectLogManager:
                         "extension_requested_by": requested_by,
                         "extension_requested_at": datetime.now(),
                         "updated_at": datetime.now()
+                    },
+                    "$unset": {  # ✅ Clear old rejection info
+                        "extension_rejection_notes": "",
+                        "extension_rejected_by": "",
+                        "extension_rejected_at": ""
+                    },
+                    "$inc": {  # ✅ Increment request count
+                        "extension_request_count": 1
                     }
                 }
             )
