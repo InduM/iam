@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import json
 from datetime import datetime
-from backend.clients_backend import ClientsBackend
-from utils.utils_clients import (
+from backend.opportunity_backend import OpportunityBackend
+from utils.utils_opportunity import (
     initialize_session_state, 
     filter_clients_by_search,
     validate_client_data,
@@ -16,7 +16,7 @@ from utils.utils_clients import (
 
 class ClientsFrontend:
     def __init__(self):
-        self.backend = ClientsBackend()
+        self.backend = OpportunityBackend()
         initialize_session_state()
         self._initialize_dynamic_fields()
     

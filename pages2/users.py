@@ -149,7 +149,6 @@ class UserInterface:
     def _show_profile_details(self, member):
         st.markdown(f"""
         <div style="padding:15px; border-radius:10px; background-color:#f8f9fa;">
-            <h3 style="margin-bottom:5px;">{member['name']}</h3>
             <p><b>Email:</b> {member['email']}</p>
             <p><b>Role:</b> <span style="background:#17a2b8; color:white; padding:3px 6px; border-radius:5px;">{member['role']}</span></p>
             <p><b>Branch:</b> <span style="background:#28a745; color:white; padding:3px 6px; border-radius:5px;">{member['branch']}</span></p>
