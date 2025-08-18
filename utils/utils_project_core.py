@@ -6,7 +6,8 @@ import yagmail
 
 # ───── Constants ─────
 TEMPLATES = {
-    "v-shesh": ["Initial Contact", "Scope", "Proposal", "Accept Quote", "Onboarding", "Service"]
+    "v-shesh": ["Initial Contact", "Scope", "Proposal", "Accept Quote", "Onboarding", "Service"],
+    "Onwards":["Mobilization","Assessment","Observation","Fee Collection","Training","Internship/Placement"]
 }
 
 # ───── Email Functions ─────

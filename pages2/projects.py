@@ -47,61 +47,169 @@ def show_dashboard():
 
     with st.container():
         st.markdown("<div class='filter-bar'>", unsafe_allow_html=True)
-        col1, col2, col3 ,col4= st.columns([3, 2, 2,2])
+        col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 2])
         with col1:
             search_query = st.text_input("🔍 Search", placeholder="Name, client, or team")
         with col2:
             filter_template = st.selectbox("📂 Template", ["All"] + list(TEMPLATES.keys()))
         with col3:
-            all_levels = sorted(set(lvl for proj in st.session_state.projects for lvl in proj.get("levels", [])))
-            filter_level = st.selectbox("📊 Progress Level", ["All"] + all_levels)
+            # Subtemplate filter - only show when "Onwards" template is selected
+            filter_subtemplate = "All"
+            if filter_template == "Onwards":
+                filter_subtemplate = st.selectbox("🔄 Subtemplate", ["All", "Foundation", "Work Readiness"])
+            else:
+                st.empty()  # Empty space when subtemplate not shown
         with col4:
+            # Dynamic progress levels based on template/subtemplate selection
+            progress_levels = _get_template_progress_levels(filter_template, filter_subtemplate)
+            filter_level = st.selectbox("📊 Progress Level", ["All"] + progress_levels)
+        with col5:
             filter_due = st.date_input("📅 Due Before or On", value=None)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    filtered_projects = _apply_filters(st.session_state.projects, search_query, filter_template, filter_level, filter_due)
+    filtered_projects = _apply_filters(st.session_state.projects, search_query, filter_template, filter_subtemplate, filter_level, filter_due)
 
-    cols = st.columns(3)
+    # Display projects in 2 columns instead of 3
+    cols = st.columns(2)
     for i, project in enumerate(filtered_projects):
-        with cols[i % 3]:
+        with cols[i % 2]:
             st.markdown("<div class='project-card'>", unsafe_allow_html=True)
             render_project_card(project, i)
             st.markdown("</div>", unsafe_allow_html=True)
 
+def _get_template_progress_levels(filter_template, filter_subtemplate="All"):
+    """Get progress levels based on selected template and subtemplate"""
+    if filter_template == "All":
+        # Show all unique levels from all projects
+        all_levels = sorted(set(lvl for proj in st.session_state.projects for lvl in proj.get("levels", [])))
+        return all_levels
+    elif filter_template == "Onwards":
+        # For Onwards template, levels don't include Invoice/Payment
+        if filter_template in TEMPLATES:
+            base_levels = TEMPLATES[filter_template].copy()
+            # Remove Invoice and Payment if they exist
+            for stage_to_remove in ["Invoice", "Payment"]:
+                if stage_to_remove in base_levels:
+                    base_levels.remove(stage_to_remove)
+            return base_levels
+        else:
+            return []
+    elif filter_template in TEMPLATES:
+        # For other templates, include all standard levels
+        template_levels = TEMPLATES[filter_template].copy()
+        # Remove Invoice and Payment first, then add them back at the end
+        for required in ["Invoice", "Payment"]:
+            if required in template_levels:
+                template_levels.remove(required)
+        return template_levels + ["Invoice", "Payment"]
+    else:
+        # Fallback: get levels from projects matching this template
+        matching_projects = [p for p in st.session_state.projects if p.get("template") == filter_template]
+        if matching_projects:
+            all_levels = sorted(set(lvl for proj in matching_projects for lvl in proj.get("levels", [])))
+            return all_levels
+        return []
 
 def show_create_form():
     if not st.session_state.get("create_initialized", False):
         initialize_create_form_state()
         st.session_state.create_initialized = True
     _render_back_button()
+    
+    # Template selection with current value
     template_options = ["Custom Template"] + list(TEMPLATES.keys())
-    selected = st.selectbox("📂 Select Template (optional)", template_options, index=0 if not st.session_state.selected_template else None)
-    if selected != "Custom Template":
-        if st.session_state.selected_template != selected:
-            st.session_state.stage_assignments = {}
-        st.session_state.selected_template = selected
+    current_template = st.session_state.get("selected_template", "")
+    
+    # Find current index for template
+    if current_template and current_template in TEMPLATES:
+        current_template_index = template_options.index(current_template)
     else:
-        if st.session_state.selected_template:
+        current_template_index = 0
+    
+    selected = st.selectbox(
+        "📂 Select Template (optional)", 
+        template_options, 
+        index=current_template_index,
+        key="template_selector"
+    )
+    
+    # Handle template selection change
+    if selected != st.session_state.get("selected_template", ""):
+        if selected != "Custom Template":
+            st.session_state.selected_template = selected
             st.session_state.stage_assignments = {}
-        st.session_state.selected_template = ""
+        else:
+            st.session_state.selected_template = ""
+            st.session_state.stage_assignments = {}
+        # Reset subtemplate when template changes
+        st.session_state.selected_subtemplate = ""
+
+    # Subtemplate selection for "Onwards" template
+    selected_subtemplate = ""
+    if st.session_state.get("selected_template") == "Onwards":
+        subtemplate_options = ["Foundation", "Work Readiness"]
+        current_subtemplate = st.session_state.get("selected_subtemplate", "")
+        
+        # Find current index for subtemplate
+        if current_subtemplate and current_subtemplate in subtemplate_options:
+            current_subtemplate_index = subtemplate_options.index(current_subtemplate)
+        else:
+            current_subtemplate_index = 0
+        
+        selected_subtemplate = st.selectbox(
+            "🔄 Select Subtemplate", 
+            subtemplate_options, 
+            index=current_subtemplate_index,
+            key="subtemplate_selector"
+        )
+        
+        # Update session state only if changed
+        if selected_subtemplate != st.session_state.get("selected_subtemplate", ""):
+            st.session_state.selected_subtemplate = selected_subtemplate
 
     st.markdown("<div class='section-header'>Project Details</div>", unsafe_allow_html=True)
     name = st.text_input("📝 Project Name", value="")
-    clients = get_all_clients()
-    if not clients:
-        st.warning("⚠ No clients found in the database.")
-    client = st.selectbox("👤 Client", options=[""] + clients, index=0)
+    
+    # Only show client field if template is NOT "Onwards"
+    client = ""
+    if st.session_state.get("selected_template") != "Onwards":
+        clients = get_all_clients()
+        if not clients:
+            st.warning("⚠ No clients found in the database.")
+            client_options = [""]
+        else:
+            client_options = [""] + clients
+        
+        client = st.selectbox(
+            "👤 Client", 
+            options=client_options, 
+            index=0,
+            key="client_selector"
+        )
+    
     description = st.text_area("🗒 Project Description", value="")
     start = st.date_input("📅 Start Date", value=date.today())
     due = st.date_input("📅 Due Date", value=date.today())
 
+    # Handle template levels
     if st.session_state.selected_template:
-        st.markdown(f"Using template: **{st.session_state.selected_template}**")
-        levels_from_template = TEMPLATES[st.session_state.selected_template].copy()
-        for required in ["Invoice", "Payment"]:
-            if required in levels_from_template:
-                levels_from_template.remove(required)
-        st.session_state.custom_levels = levels_from_template + ["Invoice", "Payment"]
+        if st.session_state.selected_template == "Onwards":
+            st.markdown(f"Using template: **{st.session_state.selected_template}** - **{selected_subtemplate}**")
+            # Get base template levels and remove Invoice/Payment
+            levels_from_template = TEMPLATES[st.session_state.selected_template].copy()
+            # Remove Invoice and Payment stages for Onwards template
+            for stage_to_remove in ["Invoice", "Payment"]:
+                if stage_to_remove in levels_from_template:
+                    levels_from_template.remove(stage_to_remove)
+            st.session_state.custom_levels = levels_from_template
+        else:
+            st.markdown(f"Using template: **{st.session_state.selected_template}**")
+            levels_from_template = TEMPLATES[st.session_state.selected_template].copy()
+            # For other templates, remove Invoice/Payment and add them back at the end
+            for required in ["Invoice", "Payment"]:
+                if required in levels_from_template:
+                    levels_from_template.remove(required)
+            st.session_state.custom_levels = levels_from_template + ["Invoice", "Payment"]
     else:
         render_custom_levels_editor()
 
@@ -119,7 +227,8 @@ def show_create_form():
     render_progress_section("create")
 
     if st.button("✅ Create Project", use_container_width=True):
-        _handle_create_project(name, client, description, start, due)
+        _handle_create_project(name, client, description, start, due, selected_subtemplate)
+
 
 def show_edit_form():
     pid = st.session_state.edit_project_id
@@ -142,17 +251,38 @@ def show_edit_form():
         return
     project = ensure_project_defaults(fresh_project)
     original_name = project.get("name", "")
+    
     st.markdown("<div class='section-header'>Project Details</div>", unsafe_allow_html=True)
     name = st.text_input("📝 Project Name", value=project.get("name", ""))
-    clients = get_all_clients()
-    if not clients:
-        st.warning("⚠ No clients found in the database.")
-    current_client = project.get("client", "")
-    if current_client in clients:
-        client = st.selectbox("👤 Client", options=clients, index=clients.index(current_client))
+    
+    # Show template and subtemplate info (read-only for existing projects)
+    project_template = project.get("template", "")
+    project_subtemplate = project.get("subtemplate", "")
+    
+    if project_template:
+        if project_template == "Onwards" and project_subtemplate:
+            st.info(f"📂 Template: **{project_template}** - **{project_subtemplate}**")
+        else:
+            st.info(f"📂 Template: **{project_template}**")
+    
+    # Only show client field if project template is NOT "Onwards"
+    client = ""
+    if project_template != "Onwards":
+        clients = get_all_clients()
+        if not clients:
+            st.warning("⚠ No clients found in the database.")
+        current_client = project.get("client", "")
+        if current_client in clients:
+            client = st.selectbox("👤 Client", options=clients, index=clients.index(current_client))
+        else:
+            st.warning(f"⚠ Current client '{current_client}' not found in client list. Please select a new client.")
+            client = st.selectbox("👤 Client", options=clients)
     else:
-        st.warning(f"⚠ Current client '{current_client}' not found in client list. Please select a new client.")
-        client = st.selectbox("👤 Client", options=clients)
+        # For Onwards projects, don't show client field but preserve existing client value
+        client = project.get("client", "")
+        if client:
+            st.info(f"👤 Client field hidden for Onwards template. Current client: {client}")
+    
     description = st.text_area("🗒 Project Description", value=project.get("description", ""))
     start = st.date_input("📅 Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
     due = st.date_input("📅 Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
@@ -206,8 +336,8 @@ def _render_back_button():
         st.session_state.create_initialized = False
         st.rerun()
 
-def _apply_filters(projects, search_query, filter_template, filter_level, filter_due):
-    """Apply filters to project list"""
+def _apply_filters(projects, search_query, filter_template, filter_subtemplate, filter_level, filter_due):
+    """Apply filters to project list including subtemplate filter with template-aware level filtering"""
     filtered_projects = projects
     
     if search_query:
@@ -220,18 +350,36 @@ def _apply_filters(projects, search_query, filter_template, filter_level, filter
     if filter_template != "All":
         filtered_projects = [p for p in filtered_projects if p.get("template") == filter_template]
     
+    # Apply subtemplate filter for Onwards projects
+    if filter_template == "Onwards" and filter_subtemplate != "All":
+        filtered_projects = [p for p in filtered_projects if p.get("subtemplate") == filter_subtemplate]
+    
     if filter_due:
         filtered_projects = [p for p in filtered_projects if 
                            p.get("dueDate") and date.fromisoformat(p["dueDate"]) <= filter_due]
     
+    # Enhanced level filtering that works with template-specific levels
     if filter_level != "All":
-        filtered_projects = [
-            p for p in filtered_projects
-            if p.get("level", -1) >= 0 and
-            p.get("levels") and
-            len(p["levels"]) > p.get("level", -1) and
-            p["levels"][p["level"]] == filter_level
-        ]
+        if filter_template != "All":
+            # Template-specific level filtering
+            template_levels = _get_template_progress_levels(filter_template, filter_subtemplate)
+            filtered_projects = [
+                p for p in filtered_projects
+                if p.get("level", -1) >= 0 and
+                p.get("levels") and
+                len(p["levels"]) > p.get("level", -1) and
+                p["levels"][p["level"]] == filter_level and
+                filter_level in template_levels
+            ]
+        else:
+            # General level filtering (original logic)
+            filtered_projects = [
+                p for p in filtered_projects
+                if p.get("level", -1) >= 0 and
+                p.get("levels") and
+                len(p["levels"]) > p.get("level", -1) and
+                p["levels"][p["level"]] == filter_level
+            ]
     
     return filtered_projects
 

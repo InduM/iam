@@ -44,15 +44,21 @@ from .project_completion import(
 from .project_date_utils import (
     validate_stage_substage_dates,
 )
-# UPDATED FUNCTION: Enhanced create project handler with substage completion reset
-def _handle_create_project(name, client, description, start, due):
-    """Enhanced create project handler with comprehensive user-project sync"""
+
+def _handle_create_project(name, client, description, start, due, selected_subtemplate=""):
+    """Enhanced create project handler with comprehensive user-project sync and subtemplate support"""
     if not validate_project_dates(start, due):
         st.error("Cannot submit: Due date must be later than the start date.")
-    elif not name or not client:
-        st.error("Name and client are required.")
+        return
+    elif not name:
+        st.error("Project name is required.")
+        return
+    elif st.session_state.selected_template != "Onwards" and not client:
+        st.error("Client is required for non-Onwards projects.")
+        return
     elif _check_project_name_exists(name):
         st.error("A project with this name already exists. Please choose a different name.")
+        return
     else:
         # Validate stage and substage dates
         stage_assignments = st.session_state.get("stage_assignments", {})
@@ -73,10 +79,15 @@ def _handle_create_project(name, client, description, start, due):
             for user in invalid_users:
                 st.error(f"• {user}")
             return
-         # Sync users to project
+            
+        # Sync users to project
         sync_result = sync_user_project_assignments(project_name, users_to_add=assigned_users)
 
         new_proj = create_project_data(name, client, description, start, due)
+        
+        # Add subtemplate to project data if it's an Onwards project
+        if st.session_state.get("selected_template") == "Onwards" and selected_subtemplate:
+            new_proj["subtemplate"] = selected_subtemplate
         
         project_id = save_project_to_db(new_proj)
         if project_id:
@@ -84,29 +95,33 @@ def _handle_create_project(name, client, description, start, due):
             st.session_state.projects.append(new_proj)
             st.success("Project created and saved to database!")
             
-            # Update client project count
-            update_client_project_count(client)
+            # Only update client project count for non-Onwards projects
+            if st.session_state.selected_template != "Onwards" and client:
+                update_client_project_count(client)
             
             # Add project to manager
             add_project_to_manager(st.session_state.get("username", ""), name)
+            
             if sync_result["success"]:
                 # Send notifications
                 send_assignment_notifications(project_name, stage_assignments)
                 
-                # Update client count
-                update_client_project_count(client)
+                # Update client count (only for non-Onwards projects)
+                if st.session_state.selected_template != "Onwards" and client:
+                    update_client_project_count(client)
                 
                 if sync_result["added"] > 0:
                     st.success(f"✅ Project created and added to {sync_result['added']} user profiles")
             else:
                 st.error("❌ Failed to sync user assignments")
+                
             # Complete form state reset
             _reset_create_form_state()
             
             # Navigate back to dashboard
             st.session_state.view = "dashboard"
             st.rerun()
-
+                                                
 # UPDATED FUNCTION: Enhanced save project handler with date validation
 # update logic in https://claude.ai/chat/22923190-8e0c-458d-a860-ed65ffb2a9a0
 def handle_save_project(pid, project, name, client, description, start, due, original_name, stage_assignments):

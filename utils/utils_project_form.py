@@ -44,23 +44,23 @@ def _reset_create_form_state():
     # Reset view tracking
     st.session_state.last_view = None
 
-# UPDATED FUNCTION: Enhanced form initialization with substage completion defaults
 def initialize_create_form_state():
-    """Initialize create form state with all necessary defaults including substage completion"""
+    """Initialize create form state with all necessary defaults including substage completion and subtemplate"""
     # Initialize basic form state
     if "selected_template" not in st.session_state:
         st.session_state.selected_template = ""
+    if "selected_subtemplate" not in st.session_state:
+        st.session_state.selected_subtemplate = ""
     if "custom_levels" not in st.session_state:
         st.session_state.custom_levels = []
     if "stage_assignments" not in st.session_state:
         st.session_state.stage_assignments = {}
-    
-    # ENHANCED: Initialize substage completion tracking
+        
     if "substage_completion" not in st.session_state:
         st.session_state.substage_completion = {}
     if "substage_timestamps" not in st.session_state:
         st.session_state.substage_timestamps = {}
-    
+        
     # Ensure clean state when switching to create view
     if st.session_state.get("last_view") != "create":
         _reset_create_form_state()
