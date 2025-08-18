@@ -184,6 +184,25 @@ def render_project_card(project, index):
         # Show substage completion summary
         render_substage_summary_widget(project)
         
+         # --- NEW: Recent Activity log (Co-Manager related only) ---
+        from backend.log_backend import ProjectLogManager
+        log_manager = ProjectLogManager()
+        logs = log_manager.get_logs_for_project(project.get("name", ""))
+
+        cm_logs = [
+            log for log in logs 
+            if log.get("action") in ["co_manager_added", "co_manager_removed", "co_manager_updated"]
+        ]
+
+        if cm_logs:
+            st.markdown("### 🕑 Recent Co-Manager Activity")
+            for log in sorted(cm_logs, key=lambda x: x.get("timestamp", ""), reverse=True)[:5]:
+                ts = log.get("timestamp", "")
+                details = log.get("details", "")
+                by = log.get("performed_by", "?")
+                st.markdown(f"- {ts} — {details} _(by {by})_")
+        # --- End activity log ---
+
         # Mobile-optimized overdue stages display
         overdue_stages = get_overdue_stages(stage_assignments, levels, current_level)
         if overdue_stages:

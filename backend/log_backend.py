@@ -472,3 +472,22 @@ class ProjectLogManager:
         except Exception as e:
             st.error(f"Error marking task completed: {str(e)}")
             return False
+        
+    def create_log_entry(self, entry: Dict) -> bool:
+        """Insert a generic log entry into logs collection"""
+        try:
+            entry["created_at"] = datetime.now()
+            entry["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.logs.insert_one(entry)
+            return True
+        except Exception as e:
+            st.error(f"Error creating log entry: {str(e)}")
+            return False
+        
+    def get_logs_for_project(self, project_name: str) -> List[Dict]:
+        """Fetch all logs for a given project (sorted by newest first)"""
+        try:
+            return list(self.logs.find({"project": project_name}).sort("created_at", -1))
+        except Exception as e:
+            st.error(f"Error fetching logs for project: {str(e)}")
+            return []

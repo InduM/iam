@@ -1,4 +1,7 @@
 import streamlit as st
+import io
+import time
+import pandas as pd
 import time
 from datetime import date
 from backend.projects_backend import *
@@ -45,7 +48,7 @@ def run():
 
             st.session_state.projects = filtered_projects
         else:
-            # Admin/manager roles see all
+            # Managers/Admins → see everything
             st.session_state.projects = all_projects
 
         st.session_state.refresh_projects = False
@@ -61,7 +64,18 @@ def run():
 
 def show_dashboard():
     st.query_params["_"] = str(int(time.time() // 60))
-    col1, col2 = st.columns([1, 1])
+    role = st.session_state.get("role", "")
+    username = st.session_state.get("username", "")
+
+    # --- Header ---
+    st.markdown("## 📂 Projects Dashboard")
+    if role == "user":
+        st.caption(f"Showing projects you created or co-manage (logged in as **{username}**) 🧑‍💻")
+    else:
+        st.caption(f"Showing all projects (logged in as **{username}**, role: {role})")
+
+    # --- Top buttons ---
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         if st.button("➕ New Project", use_container_width=True):
             st.session_state.view = "create"
@@ -70,7 +84,11 @@ def show_dashboard():
         if st.button("🔄 Refresh", use_container_width=True):
             st.session_state.refresh_projects = True
             st.rerun()
+    with col3:
+        # Export button will appear after filters are applied
+        export_trigger = st.button("📤 Export to Excel", use_container_width=True)
 
+    # --- Filter bar ---
     with st.container():
         st.markdown("<div class='filter-bar'>", unsafe_allow_html=True)
         col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 2])
@@ -79,30 +97,71 @@ def show_dashboard():
         with col2:
             filter_template = st.selectbox("📂 Template", ["All"] + list(TEMPLATES.keys()))
         with col3:
-            # Subtemplate filter - only show when "Onwards" template is selected
             filter_subtemplate = "All"
             if filter_template == "Onwards":
                 filter_subtemplate = st.selectbox("🔄 Subtemplate", ["All", "Foundation", "Work Readiness"])
             else:
-                st.empty()  # Empty space when subtemplate not shown
+                st.empty()
         with col4:
-            # Dynamic progress levels based on template/subtemplate selection
             progress_levels = _get_template_progress_levels(filter_template, filter_subtemplate)
             filter_level = st.selectbox("📊 Progress Level", ["All"] + progress_levels)
         with col5:
             filter_due = st.date_input("📅 Due Before or On", value=None)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    filtered_projects = _apply_filters(st.session_state.projects, search_query, filter_template, filter_subtemplate, filter_level, filter_due)
+    # --- Apply standard filters ---
+    filtered_projects = _apply_filters(
+        st.session_state.projects,
+        search_query,
+        filter_template,
+        filter_subtemplate,
+        filter_level,
+        filter_due,
+    )
 
-    # Display projects in 2 columns instead of 3
+    # --- Extra role-based filter (user only) ---
+    if role == "user":
+        filter_option = st.selectbox(
+            "👤 Filter by ownership",
+            ["All", "Created by me", "I co-manage"],
+            key="project_user_filter"
+        )
+        if filter_option == "Created by me":
+            filtered_projects = [p for p in filtered_projects if p.get("created_by") == username]
+        elif filter_option == "I co-manage":
+            filtered_projects = [
+                p for p in filtered_projects
+                if any(cm.get("user") == username for cm in p.get("co_managers", []))
+            ]
+
+    # --- Export projects to Excel ---
+    if export_trigger and filtered_projects:
+        df = pd.DataFrame(filtered_projects)
+
+        # Flatten co-managers for readability
+        if "co_managers" in df.columns:
+            df["co_managers"] = df["co_managers"].apply(
+                lambda cms: ", ".join([f"{cm.get('user')} ({cm.get('access','full')})" for cm in cms]) if cms else ""
+            )
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Projects")
+        st.download_button(
+            label="⬇ Download Excel file",
+            data=output.getvalue(),
+            file_name="projects_export.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    # --- Display projects in 2-column layout ---
     cols = st.columns(2)
     for i, project in enumerate(filtered_projects):
         with cols[i % 2]:
             st.markdown("<div class='project-card'>", unsafe_allow_html=True)
             render_project_card(project, i)
             st.markdown("</div>", unsafe_allow_html=True)
-
+            
 def _get_template_progress_levels(filter_template, filter_subtemplate="All"):
     """Get progress levels based on selected template and subtemplate"""
     if filter_template == "All":

@@ -32,7 +32,22 @@ def get_project_by_name(project_name):
     except Exception as e:
         st.error(f"Error fetching project by name: {e}")
         return None
-    
+
+
+
+def insert_project_to_db(project_data):
+    """Insert a new project into the database"""
+    try:
+        collections = get_db_collections()
+        projects = collections["projects"]
+
+        result = projects.insert_one(project_data)
+        return str(result.inserted_id)
+    except Exception as e:
+        st.error(f"❌ Failed to insert project: {str(e)}")
+        return None
+
+
 def update_project_by_name(project_name, updates):
     """
     Update a project by name with the provided updates.
@@ -107,6 +122,7 @@ def save_project_to_db(project_data):
     except Exception as e:
         st.error(f"Error saving project: {e}")
         return None
+
 
 def update_project_in_db(project_id, project_data):
     """Update an existing project in MongoDB"""

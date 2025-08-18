@@ -25,6 +25,7 @@ from backend.projects_backend import (
     update_project_level_in_db,
     delete_project_from_db,
     remove_project_from_all_users,
+    insert_project_to_db
 )
 from .project_helpers import (
     create_project_data, create_updated_project_data,
@@ -45,90 +46,72 @@ from .project_date_utils import (
     validate_stage_substage_dates,
 )
 
-def _handle_create_project(name, client, description, start, due, selected_subtemplate="", co_manager=None):
-    """Enhanced create project handler with subtemplate and co-manager support"""
+def _handle_create_project(name, client, description, start, due, template, subtemplate, stage_assignments, created_by, co_managers=None):
+    """Handles new project creation, with optional co-manager logging"""
     if not validate_project_dates(start, due):
-        st.error("Cannot submit: Due date must be later than the start date.")
-        return
-    elif not name:
-        st.error("Project name is required.")
-        return
-    elif st.session_state.selected_template != "Onwards" and not client:
-        st.error("Client is required for non-Onwards projects.")
-        return
-    elif _check_project_name_exists(name):
-        st.error("A project with this name already exists. Please choose a different name.")
-        return
+        st.error("Cannot create project: Due date must be later than the start date.")
+        return None
+    elif not name or (template != "Onwards" and not client):
+        st.error("Name and client are required.")
+        return None
+
+    date_errors = validate_stage_substage_dates(stage_assignments, due)
+    if date_errors:
+        st.error("Cannot create project due to date validation errors:")
+        for error in date_errors:
+            st.error(f"• {error}")
+        return None
+
+    assigned_users = extract_project_users(stage_assignments)
+    is_valid, invalid_users = validate_users_exist(assigned_users)
+    if not is_valid:
+        st.error("Cannot create project - the following users don't exist in the database:")
+        for user in invalid_users:
+            st.error(f"• {user}")
+        return None
+
+    project_data = {
+        "name": name,
+        "client": client,
+        "description": description,
+        "startDate": start.isoformat(),
+        "dueDate": due.isoformat(),
+        "template": template,
+        "subtemplate": subtemplate,
+        "created_by": created_by,
+        "stage_assignments": stage_assignments,
+        "co_managers": co_managers or []
+    }
+
+    pid = insert_project_to_db(project_data)
+    if pid:
+        st.success("✅ Project created successfully")
+
+        # --- NEW: Co-Manager logging ---
+        if co_managers:
+            from backend.log_backend import ProjectLogManager
+            log_manager = ProjectLogManager()
+            username = st.session_state.get("username", "")
+            role = st.session_state.get("role", "")
+            for cm in co_managers:
+                log_manager.create_log_entry({
+                    "project": name,
+                    "action": "co_manager_added",
+                    "performed_by": username,
+                    "role": role,
+                    "details": f"Initial Co-Manager {cm['user']} ({cm.get('access','full')})"
+                })
+        # --- End new logging ---
+
+        return pid
     else:
-        # Validate stage and substage dates
-        stage_assignments = st.session_state.get("stage_assignments", {})
-        project_name = name
-        date_errors = validate_stage_substage_dates(stage_assignments, due)
-        
-        if date_errors:
-            st.error("Cannot create project due to date validation errors:")
-            for error in date_errors:
-                st.error(f"• {error}")
-            return
-        
-        # Validate user assignments before creating project
-        assigned_users = extract_project_users(stage_assignments)
-        is_valid, invalid_users = validate_users_exist(assigned_users)
-        if not is_valid:
-            st.error("Cannot create project - the following users don't exist in the database:")
-            for user in invalid_users:
-                st.error(f"• {user}")
-            return
-            
-        # Sync users to project
-        sync_result = sync_user_project_assignments(project_name, users_to_add=assigned_users)
-
-        new_proj = create_project_data(name, client, description, start, due)
-        
-        # Add subtemplate to project data if it's an Onwards project
-        if st.session_state.get("selected_template") == "Onwards" and selected_subtemplate:
-            new_proj["subtemplate"] = selected_subtemplate
-        
-        # --- NEW: Add co-manager if provided ---
-        if co_manager:
-            new_proj["co_manager"] = co_manager
-
-        project_id = save_project_to_db(new_proj)
-        if project_id:
-            new_proj["id"] = project_id
-            st.session_state.projects.append(new_proj)
-            st.success("Project created and saved to database!")
-            
-            # Only update client project count for non-Onwards projects
-            if st.session_state.selected_template != "Onwards" and client:
-                update_client_project_count(client)
-            
-            # Add project to manager
-            add_project_to_manager(st.session_state.get("username", ""), name)
-            
-            if sync_result["success"]:
-                # Send notifications
-                send_assignment_notifications(project_name, stage_assignments)
-                
-                if st.session_state.selected_template != "Onwards" and client:
-                    update_client_project_count(client)
-                
-                if sync_result["added"] > 0:
-                    st.success(f"✅ Project created and added to {sync_result['added']} user profiles")
-            else:
-                st.error("❌ Failed to sync user assignments")
-                
-            # Complete form state reset
-            _reset_create_form_state()
-            
-            # Navigate back to dashboard
-            st.session_state.view = "dashboard"
-            st.rerun()
+        st.error("❌ Failed to create project")
+        return None
                                                 
 # UPDATED FUNCTION: Enhanced save project handler with date validation
 # update logic in https://claude.ai/chat/22923190-8e0c-458d-a860-ed65ffb2a9a0
 def handle_save_project(pid, project, name, client, description, start, due, original_name, stage_assignments):
-    """Enhanced save project handler with comprehensive user-project sync and co-manager persistence"""
+    """Enhanced save project handler with co-manager logging"""
     if not validate_project_dates(start, due):
         st.error("Cannot save: Due date must be later than the start date.")
         return
@@ -136,7 +119,7 @@ def handle_save_project(pid, project, name, client, description, start, due, ori
         st.error("Name and client are required.")
         return
 
-    # Validate stage and substage dates
+    # Validate stage/substage dates
     date_errors = validate_stage_substage_dates(stage_assignments, due)
     if date_errors:
         st.error("Cannot save project due to date validation errors:")
@@ -144,7 +127,7 @@ def handle_save_project(pid, project, name, client, description, start, due, ori
             st.error(f"• {error}")
         return
 
-    # Validate user assignments before saving
+    # Validate user assignments
     assigned_users = extract_project_users(stage_assignments)
     is_valid, invalid_users = validate_users_exist(assigned_users)
     if not is_valid:
@@ -153,36 +136,34 @@ def handle_save_project(pid, project, name, client, description, start, due, ori
             st.error(f"• {user}")
         return
 
-    # Get old stage assignments BEFORE update
     old_stage_assignments = project.get("stage_assignments", {})
+    old_co_managers = project.get("co_managers", [])
 
     # Build updated project dict
     updated_project = create_updated_project_data(project, name, client, description, start, due, stage_assignments)
 
-    # --- NEW: Include Co-Manager if set in project dict ---
-    if "co_manager" in project:
-        updated_project["co_manager"] = project["co_manager"]
+    # Preserve co-managers if present
+    if "co_managers" in project:
+        updated_project["co_managers"] = project["co_managers"]
 
     new_assignments = updated_project.get("stage_assignments", {})
 
     if update_project_in_db(pid, updated_project):
         success_messages = []
 
-        # Update client project counts
         _update_client_counts_after_edit(project, client)
 
-        # Handle name change - update user profiles
+        # Name changes
         if original_name != name:
             updated_count = update_project_name_in_user_profiles(original_name, name)
             if updated_count > 0:
                 success_messages.append(f"Project name updated in {updated_count} user profiles!")
 
-        # Handle stage assignment changes with comprehensive user sync
+        # Stage assignment changes
         if stage_assignments != old_stage_assignments:
             success_messages.append("Stage assignments updated!")
             send_assignment_notifications(name, stage_assignments, old_assignments=old_stage_assignments)
 
-            # ENHANCED: Comprehensive user-project sync
             old_users = extract_project_users(old_stage_assignments)
             new_users = extract_project_users(new_assignments)
             is_valid, invalid_users = validate_users_exist(new_users)
@@ -215,13 +196,56 @@ def handle_save_project(pid, project, name, client, description, start, due, ori
 
         project.update(updated_project)
 
-        # --- NEW: Confirm co-manager saved ---
-        if "co_manager" in updated_project:
-            cm = updated_project["co_manager"]
-            cm_info = f"{cm['user']} ({cm['access']})"
-            success_messages.append(f"Co-Manager saved: {cm_info}")
+        # --- NEW: Co-Manager change logging ---
+        new_co_managers = updated_project.get("co_managers", [])
+        if new_co_managers != old_co_managers:
+            from backend.log_backend import ProjectLogManager
+            log_manager = ProjectLogManager()
+            username = st.session_state.get("username", "")
+            role = st.session_state.get("role", "")
 
-        # Display success messages
+            old_users = {cm["user"]: cm for cm in old_co_managers}
+            new_users = {cm["user"]: cm for cm in new_co_managers}
+
+            # Added
+            for user, cm in new_users.items():
+                if user not in old_users:
+                    log_manager.create_log_entry({
+                        "project": name,
+                        "action": "co_manager_added",
+                        "performed_by": username,
+                        "role": role,
+                        "details": f"Co-Manager {user} added ({cm.get('access','full')})"
+                    })
+
+            # Removed
+            for user in old_users:
+                if user not in new_users:
+                    log_manager.create_log_entry({
+                        "project": name,
+                        "action": "co_manager_removed",
+                        "performed_by": username,
+                        "role": role,
+                        "details": f"Co-Manager {user} removed"
+                    })
+
+            # Updated
+            for user, cm in new_users.items():
+                if user in old_users and cm != old_users[user]:
+                    log_manager.create_log_entry({
+                        "project": name,
+                        "action": "co_manager_updated",
+                        "performed_by": username,
+                        "role": role,
+                        "details": f"Co-Manager {user} updated from {old_users[user]} to {cm}"
+                    })
+        # --- End new logging ---
+
+        # Success messages
+        if new_co_managers:
+            cm_info = ", ".join([f"{cm['user']} ({cm['access']})" for cm in new_co_managers])
+            success_messages.append(f"Co-Managers saved: {cm_info}")
+
         display_success_messages(success_messages)
 
         from backend.log_backend import ProjectLogManager
