@@ -45,8 +45,8 @@ from .project_date_utils import (
     validate_stage_substage_dates,
 )
 
-def _handle_create_project(name, client, description, start, due, selected_subtemplate=""):
-    """Enhanced create project handler with comprehensive user-project sync and subtemplate support"""
+def _handle_create_project(name, client, description, start, due, selected_subtemplate="", co_manager=None):
+    """Enhanced create project handler with subtemplate and co-manager support"""
     if not validate_project_dates(start, due):
         st.error("Cannot submit: Due date must be later than the start date.")
         return
@@ -89,6 +89,10 @@ def _handle_create_project(name, client, description, start, due, selected_subte
         if st.session_state.get("selected_template") == "Onwards" and selected_subtemplate:
             new_proj["subtemplate"] = selected_subtemplate
         
+        # --- NEW: Add co-manager if provided ---
+        if co_manager:
+            new_proj["co_manager"] = co_manager
+
         project_id = save_project_to_db(new_proj)
         if project_id:
             new_proj["id"] = project_id
@@ -106,7 +110,6 @@ def _handle_create_project(name, client, description, start, due, selected_subte
                 # Send notifications
                 send_assignment_notifications(project_name, stage_assignments)
                 
-                # Update client count (only for non-Onwards projects)
                 if st.session_state.selected_template != "Onwards" and client:
                     update_client_project_count(client)
                 
@@ -125,126 +128,153 @@ def _handle_create_project(name, client, description, start, due, selected_subte
 # UPDATED FUNCTION: Enhanced save project handler with date validation
 # update logic in https://claude.ai/chat/22923190-8e0c-458d-a860-ed65ffb2a9a0
 def handle_save_project(pid, project, name, client, description, start, due, original_name, stage_assignments):
-    """Enhanced save project handler with comprehensive user-project sync"""
+    """Enhanced save project handler with comprehensive user-project sync and co-manager persistence"""
     if not validate_project_dates(start, due):
         st.error("Cannot save: Due date must be later than the start date.")
-    elif not name or not client:
+        return
+    elif not name or (project.get("template") != "Onwards" and not client):
         st.error("Name and client are required.")
-    else:
-        # Validate stage and substage dates
-        date_errors = validate_stage_substage_dates(stage_assignments, due)
-        
-        if date_errors:
-            st.error("Cannot save project due to date validation errors:")
-            for error in date_errors:
-                st.error(f"• {error}")
-            return
-        
-        # Validate user assignments before saving
-        assigned_users = extract_project_users(stage_assignments)
-        is_valid, invalid_users = validate_users_exist(assigned_users)
-        if not is_valid:
-            st.error("Cannot save project - the following users don't exist in the database:")
-            for user in invalid_users:
-                st.error(f"• {user}")
-            return
-        
-        # Get old stage assignments BEFORE update
-        old_stage_assignments = project.get("stage_assignments", {})
-        
-        updated_project = create_updated_project_data(project, name, client, description, start, due, stage_assignments)
-        new_assignments = updated_project.get("stage_assignments", {})
-        
-        if update_project_in_db(pid, updated_project):
-            success_messages = []
-            
-            # Update client project counts
-            _update_client_counts_after_edit(project, client)
-            
-            # Handle name change - update user profiles
-            if original_name != name:
-                updated_count = update_project_name_in_user_profiles(original_name, name)
-                if updated_count > 0:
-                    success_messages.append(f"Project name updated in {updated_count} user profiles!")
-            
-            # Handle stage assignment changes with comprehensive user sync
-            if stage_assignments != old_stage_assignments:
-                success_messages.append("Stage assignments updated!")
-                send_assignment_notifications(name,stage_assignments, old_assignments=old_stage_assignments)
-                
-                # ENHANCED: Comprehensive user-project sync
-                old_users = extract_project_users(old_stage_assignments)
-                new_users = extract_project_users(new_assignments)
-                # Validate new users
-                is_valid, invalid_users = validate_users_exist(new_users)
-                if not is_valid:
-                    st.error(f"❌ Cannot update project: Invalid users {', '.join(invalid_users)}")
-                    return False
-                
-                # Calculate changes
-                users_to_add = new_users - old_users
-                users_to_remove = old_users - new_users
-                sync_result = sync_user_project_assignments(
-                        name, 
-                        users_to_add=users_to_add, 
-                        users_to_remove=users_to_remove
-                    )
-                if sync_result["success"]:
-            # Send notifications for changes
-                    send_assignment_notifications(
-                        name, 
-                        new_assignments, 
-                        changed_assignments_only=True, 
-                        old_assignments=old_stage_assignments)
-                 # Update client counts
+        return
+
+    # Validate stage and substage dates
+    date_errors = validate_stage_substage_dates(stage_assignments, due)
+    if date_errors:
+        st.error("Cannot save project due to date validation errors:")
+        for error in date_errors:
+            st.error(f"• {error}")
+        return
+
+    # Validate user assignments before saving
+    assigned_users = extract_project_users(stage_assignments)
+    is_valid, invalid_users = validate_users_exist(assigned_users)
+    if not is_valid:
+        st.error("Cannot save project - the following users don't exist in the database:")
+        for user in invalid_users:
+            st.error(f"• {user}")
+        return
+
+    # Get old stage assignments BEFORE update
+    old_stage_assignments = project.get("stage_assignments", {})
+
+    # Build updated project dict
+    updated_project = create_updated_project_data(project, name, client, description, start, due, stage_assignments)
+
+    # --- NEW: Include Co-Manager if set in project dict ---
+    if "co_manager" in project:
+        updated_project["co_manager"] = project["co_manager"]
+
+    new_assignments = updated_project.get("stage_assignments", {})
+
+    if update_project_in_db(pid, updated_project):
+        success_messages = []
+
+        # Update client project counts
+        _update_client_counts_after_edit(project, client)
+
+        # Handle name change - update user profiles
+        if original_name != name:
+            updated_count = update_project_name_in_user_profiles(original_name, name)
+            if updated_count > 0:
+                success_messages.append(f"Project name updated in {updated_count} user profiles!")
+
+        # Handle stage assignment changes with comprehensive user sync
+        if stage_assignments != old_stage_assignments:
+            success_messages.append("Stage assignments updated!")
+            send_assignment_notifications(name, stage_assignments, old_assignments=old_stage_assignments)
+
+            # ENHANCED: Comprehensive user-project sync
+            old_users = extract_project_users(old_stage_assignments)
+            new_users = extract_project_users(new_assignments)
+            is_valid, invalid_users = validate_users_exist(new_users)
+            if not is_valid:
+                st.error(f"❌ Cannot update project: Invalid users {', '.join(invalid_users)}")
+                return False
+
+            users_to_add = new_users - old_users
+            users_to_remove = old_users - new_users
+            sync_result = sync_user_project_assignments(
+                name,
+                users_to_add=users_to_add,
+                users_to_remove=users_to_remove
+            )
+            if sync_result["success"]:
+                send_assignment_notifications(
+                    name,
+                    new_assignments,
+                    changed_assignments_only=True,
+                    old_assignments=old_stage_assignments
+                )
                 _update_client_counts_after_edit(project, updated_project.get("client", ""))
-                
-                # Display results
+
                 if sync_result["added"] > 0:
                     st.success(f"✅ Project added to {sync_result['added']} new users")
                 if sync_result["removed"] > 0:
                     st.info(f"ℹ️ Project removed from {sync_result['removed']} users")
-                
             else:
                 st.error("❌ Failed to sync user assignment changes")
-            
-            project.update(updated_project)
-            
-            # Display success messages
-            display_success_messages(success_messages)
 
-            from backend.log_backend import ProjectLogManager
-            log_manager = ProjectLogManager()
-            log_manager.extract_and_create_logs()
+        project.update(updated_project)
 
-            
-            st.session_state.view = "dashboard"
-            st.rerun()
+        # --- NEW: Confirm co-manager saved ---
+        if "co_manager" in updated_project:
+            cm = updated_project["co_manager"]
+            cm_info = f"{cm['user']} ({cm['access']})"
+            success_messages.append(f"Co-Manager saved: {cm_info}")
+
+        # Display success messages
+        display_success_messages(success_messages)
+
+        from backend.log_backend import ProjectLogManager
+        log_manager = ProjectLogManager()
+        log_manager.extract_and_create_logs()
+
+        st.session_state.view = "dashboard"
+        st.rerun()
 
 
 def _handle_project_deletion(pid, project):
-    """Enhanced handle project deletion with user-project sync cleanup"""
-    if delete_project_from_db(pid):
-        project_name = project.get("name", "Unnamed")
-        
-        # Remove from projects list
-        st.session_state.projects = [proj for proj in st.session_state.projects if proj["id"] != pid]
-        
-        # Remove project from all user profiles
-        remove_project_from_all_users(project_name)
-        
-        # Remove project from all logs
-        from backend.log_backend import ProjectLogManager
-        log_manager = ProjectLogManager()
-        log_manager.remove_project_from_logs(project_name)
+    """Delete a project with permission checks, cleanup, and deletion logging"""
+    role = st.session_state.get("role", "")
+    username = st.session_state.get("username", "")
 
-        # Update client project count after deletion
-        client_name = project.get("client", "")
-        update_client_project_count(client_name)
-        st.success(f"✅ Project '{project_name}' deleted and removed from all user profiles!")
-    
-    st.session_state.confirm_delete[f"confirm_delete_{pid}"] = False
-    st.rerun()
+    # --- Permission check ---
+    if role == "user":
+        created_by = project.get("created_by", "")
+        co_managers = project.get("co_managers", [])
+        is_creator = (created_by == username)
+        is_co_manager = any(cm.get("user") == username for cm in co_managers)
+
+        if not (is_creator or is_co_manager):
+            st.error("🚫 You do not have permission to delete this project.")
+            return
+    # --- End permission check ---
+
+    try:
+        if delete_project_from_db(pid):
+            # Remove from session state
+            st.session_state.projects = [p for p in st.session_state.projects if p["id"] != pid]
+            st.success("🗑 Project deleted successfully")
+
+            # --- NEW: Log deletion event ---
+            from backend.log_backend import ProjectLogManager
+            log_manager = ProjectLogManager()
+            log_manager.create_log_entry({
+                "project": project.get("name", f"pid:{pid}"),
+                "action": "delete",
+                "performed_by": username,
+                "role": role,
+                "details": f"Project deleted by {username} (role: {role})"
+            })
+            # Refresh other logs if needed
+            log_manager.extract_and_create_logs()
+            # --- End new logging ---
+
+            st.session_state.view = "dashboard"
+            st.rerun()
+        else:
+            st.error("❌ Failed to delete project from database")
+    except Exception as e:
+        st.error(f"❌ Error while deleting project: {str(e)}")
 
 
 def handle_level_change(project, project_id, new_index, stage_assignments, context="dashboard"):

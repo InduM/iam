@@ -22,15 +22,41 @@ def run():
     _initialize_services()
     if "last_view" not in st.session_state:
         st.session_state.last_view = None
+
     if "projects" not in st.session_state or st.session_state.get("refresh_projects", False):
-        st.session_state.projects = load_projects_from_db()
+        all_projects = load_projects_from_db()
+        username = st.session_state.get("username", "")
+        role = st.session_state.get("role", "")
+
+        if role == "user":
+            filtered_projects = []
+            for proj in all_projects:
+                created_by = proj.get("created_by", "")
+                co_managers = proj.get("co_managers", [])
+
+                # Check if user is creator
+                is_creator = (created_by == username)
+
+                # Check if user is co-manager
+                is_co_manager = any(cm.get("user") == username for cm in co_managers)
+
+                if is_creator or is_co_manager:
+                    filtered_projects.append(proj)
+
+            st.session_state.projects = filtered_projects
+        else:
+            # Admin/manager roles see all
+            st.session_state.projects = all_projects
+
         st.session_state.refresh_projects = False
+
     if st.session_state.view == "dashboard":
         show_dashboard()
     elif st.session_state.view == "create":
         show_create_form()
     elif st.session_state.view == "edit":
         show_edit_form()
+
 
 
 def show_dashboard():
@@ -226,8 +252,22 @@ def show_create_form():
 
     render_progress_section("create")
 
+    # --- NEW: Co-Manager in create form ---
+    st.subheader("Co-Manager")
+    co_manager = None
+    if st.checkbox("➕ Add Co-Manager", key="add_co_manager_create"):
+        team_members = get_team_members_username(st.session_state.get("role", ""))
+        cm_user = st.selectbox("Select Co-Manager", options=team_members, key="cm_user_create")
+        cm_access = st.radio("Access Type", ["Full Project Access", "Stage-Limited Access"], key="cm_access_create")
+        if cm_access == "Stage-Limited Access":
+            cm_stages = st.multiselect("Select allowed stages", st.session_state.custom_levels, key="cm_stages_create")
+            co_manager = {"user": cm_user, "access": "limited", "stages": cm_stages}
+        else:
+            co_manager = {"user": cm_user, "access": "full"}
+
+
     if st.button("✅ Create Project", use_container_width=True):
-        _handle_create_project(name, client, description, start, due, selected_subtemplate)
+        _handle_create_project(name, client, description, start, due, selected_subtemplate,co_manager   )
 
 
 def show_edit_form():
@@ -235,6 +275,7 @@ def show_edit_form():
     current_project = next((p for p in st.session_state.projects if p["id"] == pid), None)
     project_name = current_project.get("name", "") if current_project else ""
     _render_edit_header_with_refresh(project_name, pid)
+    
     if st.session_state.get(f"edit_refresh_success_{pid}", False):
         st.success("✅ Project data refreshed from database!")
         del st.session_state[f"edit_refresh_success_{pid}"]
@@ -242,9 +283,28 @@ def show_edit_form():
         _initialize_edit_mode_state(pid)
         st.session_state[f"edit_initialized_{pid}"] = True
         st.rerun()
+    
     if not current_project:
         st.error("Project not found.")
         return
+    
+    # --- Permission check ---
+    role = st.session_state.get("role", "")
+    username = st.session_state.get("username", "")
+
+    if role == "user":
+        created_by = current_project.get("created_by", "")
+        co_managers = current_project.get("co_managers", [])
+        is_creator = (created_by == username)
+        is_co_manager = any(cm.get("user") == username for cm in co_managers)
+
+        if not (is_creator or is_co_manager):
+            st.error("🚫 You do not have permission to edit this project.")
+            st.session_state.view = "dashboard"
+            st.rerun()
+            return
+    # --- End permission check ---
+
     fresh_project = get_project_by_name(project_name)
     if not fresh_project:
         st.error("Project not found in database.")
@@ -286,6 +346,36 @@ def show_edit_form():
     description = st.text_area("🗒 Project Description", value=project.get("description", ""))
     start = st.date_input("📅 Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
     due = st.date_input("📅 Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
+
+     # --- NEW: Co-Manager section ---
+    st.subheader("Co-Manager")
+    existing_cm = project.get("co_manager")
+    if existing_cm:
+        cm_user = existing_cm.get("user", "-")
+        cm_access = existing_cm.get("access", "full")
+        if cm_access == "limited":
+            stages = ", ".join(existing_cm.get("stages", [])) or "No stages selected"
+            st.info(f"Current Co-Manager: **{cm_user}** (Limited Access: {stages})")
+        else:
+            st.info(f"Current Co-Manager: **{cm_user}** (Full Access)")
+    
+    if st.button("➕ Add / Change Co-Manager", key=f"add_co_manager_{pid}"):
+        st.session_state[f"show_co_manager_{pid}"] = True
+
+    if st.session_state.get(f"show_co_manager_{pid}", False):
+        team_members = get_team_members_username(st.session_state.get("role", ""))
+        co_manager = st.selectbox("Select Co-Manager", options=team_members, key=f"co_manager_select_{pid}")
+        access_type = st.radio("Access Type", ["Full Project Access", "Stage-Limited Access"], key=f"co_manager_access_{pid}")
+        if access_type == "Stage-Limited Access":
+            stages = project.get("levels", [])
+            allowed_stages = st.multiselect("Select allowed stages", stages, key=f"co_manager_stages_{pid}")
+            project["co_manager"] = {"user": co_manager, "access": "limited", "stages": allowed_stages}
+        else:
+            project["co_manager"] = {"user": co_manager, "access": "full"}
+    if existing_cm and st.button("❌ Remove Co-Manager", key=f"remove_cm_{pid}"):
+        project.pop("co_manager", None)
+        st.success("Co-Manager removed. Save changes to apply.")
+
     team_members = get_team_members_username(st.session_state.get("role", ""))
     st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
     current_stage_assignments = project.get("stage_assignments", {})

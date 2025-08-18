@@ -149,7 +149,11 @@ def render_project_card(project, index):
     
     with st.expander(f"{project.get('name', 'Unnamed')}"):
         # Mobile-first layout with better spacing
-        st.markdown(f"**Client:** {project.get('client', '-')}")
+        template = project.get("template", "")
+        if template == "Onwards":
+            st.markdown(f"**Subtemplate:** {project.get('subtemplate', '-')}")
+        else:
+            st.markdown(f"**Client:** {project.get('client', '-')}")
         st.markdown(f"**Description:** {project.get('description', '-')}")
         
         # Date information in mobile-friendly format
@@ -160,6 +164,15 @@ def render_project_card(project, index):
             st.markdown(f"**Due:** {project.get('dueDate', '-')}")
         
         st.markdown(f"**Manager:** {project.get('created_by', '-')}")
+        if project.get("co_manager"):
+            cm = project["co_manager"]
+            cm_user = cm.get("user", "-")
+            cm_access = cm.get("access", "full")
+            if cm_access == "limited":
+                stages = ", ".join(cm.get("stages", [])) or "No stages selected"
+                st.markdown(f"**Co-Manager:** {cm_user} (Limited Access: {stages})")
+            else:
+                st.markdown(f"**Co-Manager:** {cm_user} (Full Access)")
         
         levels = project.get("levels", ["Initial", "Invoice", "Payment"])
         current_level = project.get("level", -1)
@@ -803,23 +816,44 @@ def render_progress_section(form_type):
     )
 
 def _render_project_action_buttons(project, pid):
-    """Render project action buttons (Edit/Delete)"""
+    """Render project action buttons (Edit/Delete) with role-based restrictions"""
+    role = st.session_state.get("role", "")
+    username = st.session_state.get("username", "")
+
+    # Permission checks
+    can_edit = True
+    if role == "user":
+        created_by = project.get("created_by", "")
+        co_managers = project.get("co_managers", [])
+        is_creator = (created_by == username)
+        is_co_manager = any(cm.get("user") == username for cm in co_managers)
+        can_edit = is_creator or is_co_manager
+
     col1, col2 = st.columns(2)
-    if col1.button("✏ Edit", key=f"edit_{pid}"):
-        st.session_state.edit_project_id = pid
-        st.session_state.view = "edit"
-        st.rerun()
-    
-    confirm_key = f"confirm_delete_{pid}"
-    if not st.session_state.confirm_delete.get(confirm_key):
-        if col2.button("🗑 Delete", key=f"del_{pid}"):
-            st.session_state.confirm_delete[confirm_key] = True
+
+    # Edit button only if user has edit rights
+    if can_edit:
+        if col1.button("✏ Edit", key=f"edit_{pid}"):
+            st.session_state.edit_project_id = pid
+            st.session_state.view = "edit"
             st.rerun()
     else:
-        st.warning("Are you sure you want to delete this project?")
-        col_yes, col_no = st.columns(2)
-        if col_yes.button("✅ Yes", key=f"yes_{pid}"):
-            _handle_project_deletion(pid, project)
-        if col_no.button("❌ No", key=f"no_{pid}"):
-            st.session_state.confirm_delete[confirm_key] = False
-            st.rerun()
+        col1.caption("🔒 No edit permission")
+
+    # Delete is always visible to admins/managers; hidden for users
+    if role != "user":
+        confirm_key = f"confirm_delete_{pid}"
+        if not st.session_state.confirm_delete.get(confirm_key):
+            if col2.button("🗑 Delete", key=f"del_{pid}"):
+                st.session_state.confirm_delete[confirm_key] = True
+                st.rerun()
+        else:
+            st.warning("Are you sure you want to delete this project?")
+            col_yes, col_no = st.columns(2)
+            if col_yes.button("✅ Yes", key=f"yes_{pid}"):
+                _handle_project_deletion(pid, project)
+            if col_no.button("❌ No", key=f"no_{pid}"):
+                st.session_state.confirm_delete[confirm_key] = False
+                st.rerun()
+    else:
+        col2.caption("🔒 No delete permission")
