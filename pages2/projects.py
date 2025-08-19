@@ -305,41 +305,53 @@ def show_edit_form():
         st.error("Project not found.")
         return
     
-    # --- Permission check ---
+    # --- Enhanced Permission check ---
     role = st.session_state.get("role", "")
     username = st.session_state.get("username", "")
+    allowed_stages = []  # Initialize as empty list
+    is_creator = False
+    is_co_manager = False
+    has_full_access = False
 
     if role == "user":
         created_by = current_project.get("created_by", "")
         co_managers = current_project.get("co_managers", [])
+        project_levels = current_project.get("levels", [])
+        
         is_creator = (created_by == username)
-        #is_co_manager = any(cm.get("user") == username for cm in co_managers)
-        is_co_manager = False
-        allowed_stages = []
 
+        # Check co-manager permissions
         for cm in co_managers:
             if cm.get("user") == username:
                 if cm.get("access") == "full":
                     is_co_manager = True
-                    allowed_stages = project.get("levels", [])  # all stages
+                    has_full_access = True
+                    allowed_stages = project_levels  # all stages
                 elif cm.get("access") == "limited":
                     is_co_manager = True
+                    has_full_access = False
                     allowed_stages = cm.get("stages", [])
                 break
 
-        if not (is_creator or is_co_manager):
-            st.error("🚫 You do not have permission to edit this project.")
-            st.session_state.view = "dashboard"
-            st.rerun()
-            return
-
+        # Creator has full access to all stages
+        if is_creator:
+            has_full_access = True
+            allowed_stages = project_levels
 
         if not (is_creator or is_co_manager):
             st.error("🚫 You do not have permission to edit this project.")
             st.session_state.view = "dashboard"
             st.rerun()
             return
-    # --- End permission check ---
+            
+        # Show permission info for limited access users
+        if not has_full_access and allowed_stages:
+            st.info(f"🔒 Limited Access: You can only edit stages: {', '.join(allowed_stages)}")
+    else:
+        # Managers/Admins have full access
+        has_full_access = True
+        allowed_stages = current_project.get("levels", [])
+    # --- End enhanced permission check ---
 
     fresh_project = get_project_by_name(project_name)
     if not fresh_project:
@@ -366,105 +378,110 @@ def show_edit_form():
     if project_template != "Onwards":
         clients = get_all_clients()
         if not clients:
-            st.warning("⚠ No clients found in the database.")
+            st.warning("⚠️ No clients found in the database.")
         current_client = project.get("client", "")
         if current_client in clients:
             client = st.selectbox("👤 Client", options=clients, index=clients.index(current_client))
         else:
-            st.warning(f"⚠ Current client '{current_client}' not found in client list. Please select a new client.")
+            st.warning(f"⚠️ Current client '{current_client}' not found in client list. Please select a new client.")
             client = st.selectbox("👤 Client", options=clients)
     else:
         client = project.get("client", "")
         if client:
             st.info(f"👤 Client field hidden for Onwards template. Current client: {client}")
     
-    description = st.text_area("🗒 Project Description", value=project.get("description", ""))
+    description = st.text_area("🗒️ Project Description", value=project.get("description", ""))
     start = st.date_input("📅 Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
     due = st.date_input("📅 Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
 
-    # --- NEW: Multi Co-Managers Section ---
-    st.subheader("👥 Co-Managers")
-    existing_cms = project.get("co_managers", [])
+    # --- Multi Co-Managers Section (only show if user has full access) ---
+    if has_full_access:
+        st.subheader("👥 Co-Managers")
+        existing_cms = project.get("co_managers", [])
 
-    if existing_cms:
-        st.markdown("**Current Co-Managers:**")
-        for cm in existing_cms:
-            cm_user = cm.get("user", "-")
-            cm_access = cm.get("access", "full")
+        if existing_cms:
+            st.markdown("**Current Co-Managers:**")
+            for cm in existing_cms:
+                cm_user = cm.get("user", "-")
+                cm_access = cm.get("access", "full")
+                if cm_access == "limited":
+                    stages = ", ".join(cm.get("stages", [])) or "No stages selected"
+                    st.info(f"• {cm_user} (Limited Access: {stages})")
+                else:
+                    st.info(f"• {cm_user} (Full Access)")
+
+        num_cms = st.number_input(
+            "Number of Co-Managers",
+            min_value=0,
+            max_value=5,
+            value=len(existing_cms),
+            step=1,
+            key=f"num_co_managers_{pid}"
+        )
+
+        co_managers = []
+        team_members = get_team_members_username(st.session_state.get("role", ""))
+        for i in range(num_cms):
+            st.markdown(f"#### Co-Manager #{i+1}")
+            col1, col2 = st.columns(2)
+            with col1:
+                cm_user = st.selectbox(
+                    f"Select User (Co-Manager #{i+1})",
+                    [""] + team_members,
+                    index=(team_members.index(existing_cms[i]["user"]) + 1) if i < len(existing_cms) and existing_cms[i]["user"] in team_members else 0,
+                    key=f"cm_user_edit_{pid}_{i}"
+                )
+            with col2:
+                cm_access = st.selectbox(
+                    f"Access Type (Co-Manager #{i+1})",
+                    ["full", "limited"],
+                    index=(["full", "limited"].index(existing_cms[i]["access"])) if i < len(existing_cms) else 0,
+                    key=f"cm_access_edit_{pid}_{i}"
+                )
+
+            cm_stages = []
             if cm_access == "limited":
-                stages = ", ".join(cm.get("stages", [])) or "No stages selected"
-                st.info(f"• {cm_user} (Limited Access: {stages})")
-            else:
-                st.info(f"• {cm_user} (Full Access)")
+                all_stages = project.get("levels", [])
+                cm_stages = st.multiselect(
+                    f"Allowed Stages (Co-Manager #{i+1})",
+                    all_stages,
+                    default=existing_cms[i].get("stages", []) if i < len(existing_cms) else [],
+                    key=f"cm_stages_edit_{pid}_{i}"
+                )
 
-    num_cms = st.number_input(
-        "Number of Co-Managers",
-        min_value=0,
-        max_value=5,
-        value=len(existing_cms),
-        step=1,
-        key=f"num_co_managers_{pid}"
-    )
+            if cm_user:
+                co_managers.append({
+                    "user": cm_user,
+                    "access": cm_access,
+                    "stages": cm_stages
+                })
 
-    co_managers = []
-    team_members = get_team_members_username(st.session_state.get("role", ""))
-    for i in range(num_cms):
-        st.markdown(f"#### Co-Manager #{i+1}")
-        col1, col2 = st.columns(2)
-        with col1:
-            cm_user = st.selectbox(
-                f"Select User (Co-Manager #{i+1})",
-                [""] + team_members,
-                index=(team_members.index(existing_cms[i]["user"]) + 1) if i < len(existing_cms) and existing_cms[i]["user"] in team_members else 0,
-                key=f"cm_user_edit_{pid}_{i}"
-            )
-        with col2:
-            cm_access = st.selectbox(
-                f"Access Type (Co-Manager #{i+1})",
-                ["full", "limited"],
-                index=(["full", "limited"].index(existing_cms[i]["access"])) if i < len(existing_cms) else 0,
-                key=f"cm_access_edit_{pid}_{i}"
-            )
+        # Save co-managers back to project
+        project["co_managers"] = co_managers
 
-        cm_stages = []
-        if cm_access == "limited":
-            all_stages = project.get("levels", [])
-            cm_stages = st.multiselect(
-                f"Allowed Stages (Co-Manager #{i+1})",
-                all_stages,
-                default=existing_cms[i].get("stages", []) if i < len(existing_cms) else [],
-                key=f"cm_stages_edit_{pid}_{i}"
-            )
-
-        if cm_user:
-            co_managers.append({
-                "user": cm_user,
-                "access": cm_access,
-                "stages": cm_stages
-            })
-
-    # Save co-managers back to project
-    project["co_managers"] = co_managers
-
-    # --- Stage Assignments ---
-    team_members = get_team_members_username(st.session_state.get("role", ""))
-    st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
-    current_stage_assignments = project.get("stage_assignments", {})
-    stage_assignments = render_substage_assignments_editor(
-        project.get("levels", ["Initial", "Invoice", "Payment"]),
-        team_members,
-        current_stage_assignments,
-    )
-    if stage_assignments:
-        assignment_issues = validate_stage_assignments(stage_assignments, project.get("levels", []))
-        if assignment_issues:
-            for issue in assignment_issues:
-                st.warning(f"⚠️ {issue}")
-    overdue_stages = get_overdue_stages(current_stage_assignments, project.get("levels", []), project.get("level", -1))
-    if overdue_stages:
-        st.error("🔴 Overdue Stages:")
-        for overdue in overdue_stages:
-            st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue (Due: {overdue['deadline']})")
+    # --- Stage Assignments (only show if user has full access) ---
+    if has_full_access:
+        team_members = get_team_members_username(st.session_state.get("role", ""))
+        st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
+        current_stage_assignments = project.get("stage_assignments", {})
+        stage_assignments = render_substage_assignments_editor(
+            project.get("levels", ["Initial", "Invoice", "Payment"]),
+            team_members,
+            current_stage_assignments,
+        )
+        if stage_assignments:
+            assignment_issues = validate_stage_assignments(stage_assignments, project.get("levels", []))
+            if assignment_issues:
+                for issue in assignment_issues:
+                    st.warning(f"⚠️ {issue}")
+        overdue_stages = get_overdue_stages(current_stage_assignments, project.get("levels", []), project.get("level", -1))
+        if overdue_stages:
+            st.error("🔴 Overdue Stages:")
+            for overdue in overdue_stages:
+                st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue (Due: {overdue['deadline']})")
+    else:
+        # For limited access users, use existing stage assignments
+        stage_assignments = project.get("stage_assignments", {})
 
     # --- Progress Section ---
     st.subheader("Progress")
@@ -475,7 +492,7 @@ def show_edit_form():
         if role != "user":
             st.rerun()
         else:
-             # ✅ Update just this project’s level in session_state
+             # ✅ Update just this project's level in session_state
             for idx, p in enumerate(st.session_state.projects):
                 if p["id"] == pid:
                     st.session_state.projects[idx]["level"] = new_index
@@ -488,7 +505,7 @@ def show_edit_form():
         project.get("levels", ["Initial", "Invoice", "Payment"]),
         on_change_edit,
         editable=True,
-        stage_assignments=current_stage_assignments,
+        stage_assignments=project.get("stage_assignments", {}),
         project=project,
         editable_stages=allowed_stages if role == "user" else None
     )
@@ -506,6 +523,7 @@ def show_edit_form():
                     break
             st.success("✅ Changes saved (no refresh needed)")
             st.session_state.view = "dashboard"
+
 
 def _render_back_button():
     """Enhanced back button with cleanup"""

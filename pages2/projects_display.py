@@ -268,10 +268,7 @@ def render_project_card(project, index):
 
 def render_level_checkboxes_with_substages(context, project_id, current_level, timestamps, levels, 
                                          on_change, editable=False, stage_assignments=None, project=None, editable_stages=None):
-    """Enhanced level checkboxes that also show substages with validation"""
-
-    
-
+    """Enhanced level checkboxes that also show substages with validation and stage-level restrictions"""
 
     if not levels:
         st.warning("No levels defined for this project.")
@@ -280,6 +277,11 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
     is_form_context = _detect_form_context(project_id)
     
     for i, level in enumerate(levels):
+        # Check if this stage is editable for limited access users
+        stage_is_editable = True
+        if editable_stages is not None:  # Limited access user
+            stage_is_editable = level in editable_stages
+        
         # Create container for stage and its substages
         stage_container = st.container()
         
@@ -297,16 +299,19 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                 can_advance_sequentially = _validate_sequential_access(current_level, i, current_level, True)
                 can_go_back_sequentially = _validate_sequential_access(current_level, i, current_level, False)
                 
+                # Determine if checkbox should be disabled
+                checkbox_disabled = not editable or not stage_is_editable
+                
                 if editable:
                     checked = st.checkbox(
-                        f"**{i+1}. {level}**",
+                        f"**{i+1}. {level}**" + (" 🔒" if not stage_is_editable else ""),
                         value=is_checked,
                         key=key,
-                        disabled=False
+                        disabled=checkbox_disabled
                     )
                     
-                    # Handle state change with sequential validation
-                    if checked != is_checked:
+                    # Handle state change with sequential validation (only if stage is editable)
+                    if stage_is_editable and checked != is_checked:
                         if checked:
                             # Trying to check a stage
                             if not can_advance_sequentially:
@@ -329,7 +334,9 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                                     on_change(i - 1)
                     
                     # Show status messages
-                    if not can_check_stage and not is_checked:
+                    if not stage_is_editable:
+                        st.caption("🔒 Stage locked - Limited access")
+                    elif not can_check_stage and not is_checked:
                         st.caption("⚠️ Complete all substages first")
                     elif not can_advance_sequentially and not is_checked:
                         st.caption("🔒 Complete previous stages first")
@@ -338,7 +345,8 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                         
                 else:
                     status = "✅" if is_checked else "⏳"
-                    st.markdown(f"{status} **{i+1}. {level}**")
+                    lock_indicator = " 🔒" if not stage_is_editable and editable_stages is not None else ""
+                    st.markdown(f"{status} **{i+1}. {level}**{lock_indicator}")
             
             def render_timestamp():
                 # Show timestamp if available
@@ -358,13 +366,13 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                     with st.container():
                         st.markdown("") # Add some spacing
                         render_substage_progress_with_edit(
-                            project, project_id, i, substages, editable
+                            project, project_id, i, substages, 
+                            editable and stage_is_editable  # Pass stage editability to substages
                         )
                         st.markdown("---") # Add separator after substages
 
-
 def render_substage_progress_with_edit(project, project_id, stage_index, substages, editable=False):
-    """Render substage progress with real-time editing capability and validation - Updated with start_date"""
+    """Render substage progress with real-time editing capability and validation - Updated with stage restrictions"""
     if not substages:
         return
     
@@ -455,9 +463,14 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
                         st.caption("      🔒 Completed substage")
                         
                 else:
-                    # Read-only display or inaccessible stage
+                    # Read-only display or inaccessible/locked stage
                     status = "✅" if is_completed else "⏳"
-                    disabled_text = " (locked)" if not stage_accessible and editable else ""
+                    disabled_text = ""
+                    if not stage_accessible and editable:
+                        disabled_text = " (stage locked)"
+                    elif not editable and stage_accessible:
+                        disabled_text = " (stage restricted)"
+                    
                     st.markdown(f"  {status} 🔸 {substage_name}{disabled_text}")
             
             def render_substage_info():
@@ -556,6 +569,7 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
         st.success("Substage status updated!")
         time.sleep(0.1)
         st.rerun()
+
 
 
 # New helper function to validate substage dates
@@ -848,24 +862,43 @@ def render_progress_section(form_type):
     )
 
 def _render_project_action_buttons(project, pid):
-    """Render project action buttons (Edit/Delete) with role-based restrictions"""
+    """Render project action buttons (Edit/Delete) with enhanced role-based restrictions"""
     role = st.session_state.get("role", "")
     username = st.session_state.get("username", "")
 
-    # Permission checks
+    # Enhanced permission checks
     can_edit = True
+    access_type = "full"  # Track access type for display
+    
     if role == "user":
         created_by = project.get("created_by", "")
         co_managers = project.get("co_managers", [])
         is_creator = (created_by == username)
-        is_co_manager = any(cm.get("user") == username for cm in co_managers)
+        is_co_manager = False
+        
+        # Check co-manager status and access type
+        for cm in co_managers:
+            if cm.get("user") == username:
+                is_co_manager = True
+                access_type = cm.get("access", "full")
+                break
+        
         can_edit = is_creator or is_co_manager
+        
+        if is_creator:
+            access_type = "creator"
 
     col1, col2 = st.columns(2)
 
-    # Edit button only if user has edit rights
+    # Edit button with access type indication
     if can_edit:
-        if col1.button("✏ Edit", key=f"edit_{pid}"):
+        button_text = "✏️ Edit"
+        if role == "user" and access_type == "limited":
+            button_text = "✏️ Edit (Limited)"
+        elif role == "user" and access_type == "creator":
+            button_text = "✏️ Edit (Creator)"
+        
+        if col1.button(button_text, key=f"edit_{pid}"):
             st.session_state.edit_project_id = pid
             st.session_state.view = "edit"
             st.rerun()
@@ -876,7 +909,7 @@ def _render_project_action_buttons(project, pid):
     if role != "user":
         confirm_key = f"confirm_delete_{pid}"
         if not st.session_state.confirm_delete.get(confirm_key):
-            if col2.button("🗑 Delete", key=f"del_{pid}"):
+            if col2.button("🗑️ Delete", key=f"del_{pid}"):
                 st.session_state.confirm_delete[confirm_key] = True
                 st.rerun()
         else:
