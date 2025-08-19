@@ -19,7 +19,7 @@ class ClientsFrontend:
     def show_dashboard(self):
         """Display the main clients dashboard"""
         # Action buttons
-        col1, col2 = st.columns([1, 1])
+        col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
             if st.button("➕ New Client"):
                 navigate_to_view("create")
@@ -27,6 +27,9 @@ class ClientsFrontend:
             if st.button("🔄 Refresh"):
                 st.session_state.refresh_clients = True
                 st.rerun()
+        with col3:
+            if st.button("📤 Export to Excel"):
+                self._export_clients_to_excel()
 
         # Search Filter
         search_query = st.text_input("🔍 Search", placeholder="Name, Email, Company, SPOC, Phone or Description")
@@ -35,10 +38,46 @@ class ClientsFrontend:
         clients = self.backend.load_clients()
         filtered_clients = filter_clients_by_search(clients, search_query)
 
+          # Save filtered clients in session state for export
+        st.session_state.filtered_clients = filtered_clients
+
         # Display clients
         for client in filtered_clients:
             self._render_client_card(client)
     
+
+    def _export_clients_to_excel(self):
+        """Export currently filtered clients to Excel"""
+        import pandas as pd
+        from io import BytesIO
+
+        clients = st.session_state.get("filtered_clients", [])
+        if not clients:
+            st.warning("⚠️ No clients to export.")
+            return
+
+        # Convert to DataFrame
+        df = pd.DataFrame(clients)
+
+        # Remove internal fields like _id if needed
+        if "_id" in df.columns:
+            df = df.drop(columns=["_id"])
+
+        # Create Excel in memory
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Clients")
+
+        output.seek(0)
+
+        # Download button
+        st.download_button(
+            label="⬇ Download Excel",
+            data=output,
+            file_name="clients.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
     def _render_client_card(self, client):
         """Render individual client card"""
         cid = client["_id"]
@@ -82,28 +121,38 @@ class ClientsFrontend:
     def _render_client_actions(self, client, cid, project_count):
         """Render action buttons for client card"""
         col1, col2 = st.columns(2)
-        
-        # Edit button
-        if col1.button("✏ Edit", key=f"edit_{cid}"):
-            navigate_to_view("edit", edit_client_id=cid)
 
-        # Delete button with confirmation
-        confirm_key = f"confirm_delete_{cid}"
-        if not st.session_state.confirm_delete_client.get(confirm_key):
-            # Show different button styles based on project count
-            if project_count > 0:
-                # Disabled-style button for clients with projects
-                if col2.button("🚫 Delete", key=f"delete_{cid}", help="Cannot delete - client has associated projects"):
-                    st.session_state.confirm_delete_client[confirm_key] = True
-                    st.rerun()
+        role = st.session_state.get("role", "user")  
+        username = st.session_state.get("username", "unknown")
+
+        # User can edit/delete only if admin OR creator
+        can_edit = (role == "admin") or (client.get("created_by") == username)
+
+        if can_edit:
+            # Edit button
+            if col1.button("✏ Edit", key=f"edit_{cid}"):
+                navigate_to_view("edit", edit_client_id=cid)
+
+            # Delete button with confirmation
+            confirm_key = f"confirm_delete_{cid}"
+            if not st.session_state.confirm_delete_client.get(confirm_key):
+                if project_count > 0:
+                    # Disabled-style delete button if client has projects
+                    if col2.button("🚫 Delete", key=f"delete_{cid}", help="Cannot delete - client has associated projects"):
+                        st.session_state.confirm_delete_client[confirm_key] = True
+                        st.rerun()
+                else:
+                    # Normal delete button
+                    if col2.button("🗑 Delete", key=f"delete_{cid}"):
+                        st.session_state.confirm_delete_client[confirm_key] = True
+                        st.rerun()
             else:
-                # Normal delete button for clients without projects
-                if col2.button("🗑 Delete", key=f"delete_{cid}"):
-                    st.session_state.confirm_delete_client[confirm_key] = True
-                    st.rerun()
+                self._render_delete_confirmation(cid, project_count, confirm_key)
         else:
-            self._render_delete_confirmation(cid, project_count, confirm_key)
-        
+            # Disabled buttons when user has no permission
+            col1.button("✏ Edit", key=f"edit_disabled_{cid}", disabled=True)
+            col2.button("🗑 Delete", key=f"delete_disabled_{cid}", disabled=True)
+    
     def _render_cancel_action(self, cid, confirm_key):
         """Render cancel action for clients with projects"""
         if st.button("❌ Cancel", key=f"cancel_{cid}"):
@@ -113,6 +162,25 @@ class ClientsFrontend:
     def _render_confirmation_actions(self, cid, confirm_key):
         """Render confirmation actions for clients without projects"""
         col_yes, col_no = st.columns(2)
+        
+        role = st.session_state.get("role", "user")
+        username = st.session_state.get("username", "unknown")
+
+        client = self.backend.get_client_by_id(cid)
+        if not client:
+            st.error("Client not found.")
+            return
+
+        # Permission check: Only admin or creator can delete
+        can_delete = (role == "admin") or (client.get("created_by") == username)
+
+        if not can_delete:
+            st.error("❌ You do not have permission to delete this client.")
+            if col_no.button("⬅ Return", key=f"no_perm_{cid}"):
+                st.session_state.confirm_delete_client[confirm_key] = False
+                st.rerun()
+            return
+
         if col_yes.button("✅ Yes, Delete", key=f"yes_{cid}"):
             if self.backend.delete_client(cid):
                 st.success("Client deleted successfully!")
@@ -167,6 +235,14 @@ class ClientsFrontend:
         
         if not client:
             st.error("Client not found.")
+            return
+
+        role = st.session_state.get("role", "user")
+        username = st.session_state.get("username", "unknown")
+        if role != "admin" and client.get("created_by") != username:
+            st.error("❌ You do not have permission to edit this client.")
+            if st.button("⬅ Return to Dashboard"):
+                navigate_to_view("dashboard")
             return
 
         # Show warning about related projects

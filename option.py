@@ -58,8 +58,8 @@ else:
         if st.session_state["role"] == "user":
             selected = option_menu(
                 None,
-                ["Profile", "Documents", "Log","Projects","Logout"],
-                icons=["person", "file-earmark-richtext","kanban","file-spreadsheet","box-arrow-right"],
+                ["Profile", "Documents", "Log","Projects","Clients","Opportunity","Logout"],
+                icons=["person", "file-earmark-richtext","kanban","file-spreadsheet","wallet","bi-gem","box-arrow-right"],
                
                 default_index=0
             )

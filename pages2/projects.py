@@ -67,7 +67,7 @@ def show_dashboard():
 
     # --- Header ---
     if role == "user":
-        st.caption(f"Showing projects you created or co-manage (logged in as **{username}**) 🧑‍💻")
+        st.caption(f"Showing projects you created or co-manage (logged in as **{username}**)")
     else:
         st.caption(f"Showing all projects (logged in as **{username}**, role: {role})")
 
