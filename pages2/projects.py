@@ -37,10 +37,8 @@ def run():
                 created_by = proj.get("created_by", "")
                 co_managers = proj.get("co_managers", [])
 
-                # Check if user is creator
+                # Check if this user is the creator or a co-manager
                 is_creator = (created_by == username)
-
-                # Check if user is co-manager
                 is_co_manager = any(cm.get("user") == username for cm in co_managers)
 
                 if is_creator or is_co_manager:
@@ -53,6 +51,7 @@ def run():
 
         st.session_state.refresh_projects = False
 
+    # route to correct view
     if st.session_state.view == "dashboard":
         show_dashboard()
     elif st.session_state.view == "create":
@@ -68,7 +67,6 @@ def show_dashboard():
     username = st.session_state.get("username", "")
 
     # --- Header ---
-    st.markdown("## 📂 Projects Dashboard")
     if role == "user":
         st.caption(f"Showing projects you created or co-manage (logged in as **{username}**) 🧑‍💻")
     else:
@@ -79,11 +77,13 @@ def show_dashboard():
     with col1:
         if st.button("➕ New Project", use_container_width=True):
             st.session_state.view = "create"
-            st.rerun()
+            if st.session_state.get("role") != "user": # 🚫 Prevent rerun for user
+                st.rerun()
     with col2:
         if st.button("🔄 Refresh", use_container_width=True):
             st.session_state.refresh_projects = True
-            st.rerun()
+            if st.session_state.get("role") != "user": # 🚫 Prevent rerun for user
+                st.rerun()
     with col3:
         # Export button will appear after filters are applied
         export_trigger = st.button("📤 Export to Excel", use_container_width=True)
@@ -161,7 +161,7 @@ def show_dashboard():
             st.markdown("<div class='project-card'>", unsafe_allow_html=True)
             render_project_card(project, i)
             st.markdown("</div>", unsafe_allow_html=True)
-            
+
 def _get_template_progress_levels(filter_template, filter_subtemplate="All"):
     """Get progress levels based on selected template and subtemplate"""
     if filter_template == "All":
@@ -196,137 +196,95 @@ def _get_template_progress_levels(filter_template, filter_subtemplate="All"):
         return []
 
 def show_create_form():
-    if not st.session_state.get("create_initialized", False):
-        initialize_create_form_state()
-        st.session_state.create_initialized = True
-    _render_back_button()
-    
-    # Template selection with current value
-    template_options = ["Custom Template"] + list(TEMPLATES.keys())
-    current_template = st.session_state.get("selected_template", "")
-    
-    # Find current index for template
-    if current_template and current_template in TEMPLATES:
-        current_template_index = template_options.index(current_template)
-    else:
-        current_template_index = 0
-    
-    selected = st.selectbox(
-        "📂 Select Template (optional)", 
-        template_options, 
-        index=current_template_index,
-        key="template_selector"
-    )
-    
-    # Handle template selection change
-    if selected != st.session_state.get("selected_template", ""):
-        if selected != "Custom Template":
-            st.session_state.selected_template = selected
-            st.session_state.stage_assignments = {}
-        else:
-            st.session_state.selected_template = ""
-            st.session_state.stage_assignments = {}
-        # Reset subtemplate when template changes
-        st.session_state.selected_subtemplate = ""
+    st.markdown("## ➕ Create New Project")
 
-    # Subtemplate selection for "Onwards" template
-    selected_subtemplate = ""
-    if st.session_state.get("selected_template") == "Onwards":
-        subtemplate_options = ["Foundation", "Work Readiness"]
-        current_subtemplate = st.session_state.get("selected_subtemplate", "")
-        
-        # Find current index for subtemplate
-        if current_subtemplate and current_subtemplate in subtemplate_options:
-            current_subtemplate_index = subtemplate_options.index(current_subtemplate)
-        else:
-            current_subtemplate_index = 0
-        
-        selected_subtemplate = st.selectbox(
-            "🔄 Select Subtemplate", 
-            subtemplate_options, 
-            index=current_subtemplate_index,
-            key="subtemplate_selector"
-        )
-        
-        # Update session state only if changed
-        if selected_subtemplate != st.session_state.get("selected_subtemplate", ""):
-            st.session_state.selected_subtemplate = selected_subtemplate
-
-    st.markdown("<div class='section-header'>Project Details</div>", unsafe_allow_html=True)
-    name = st.text_input("📝 Project Name", value="")
-    
-    # Only show client field if template is NOT "Onwards"
+    name = st.text_input("Project Name")
+    template = st.selectbox("Template", list(TEMPLATES.keys()))
     client = ""
-    if st.session_state.get("selected_template") != "Onwards":
-        clients = get_all_clients()
-        if not clients:
-            st.warning("⚠ No clients found in the database.")
-            client_options = [""]
-        else:
-            client_options = [""] + clients
-        
-        client = st.selectbox(
-            "👤 Client", 
-            options=client_options, 
-            index=0,
-            key="client_selector"
-        )
-    
-    description = st.text_area("🗒 Project Description", value="")
-    start = st.date_input("📅 Start Date", value=date.today())
-    due = st.date_input("📅 Due Date", value=date.today())
+    subtemplate = None
 
-    # Handle template levels
-    if st.session_state.selected_template:
-        if st.session_state.selected_template == "Onwards":
-            st.markdown(f"Using template: **{st.session_state.selected_template}** - **{selected_subtemplate}**")
-            # Get base template levels and remove Invoice/Payment
-            levels_from_template = TEMPLATES[st.session_state.selected_template].copy()
-            # Remove Invoice and Payment stages for Onwards template
-            for stage_to_remove in ["Invoice", "Payment"]:
-                if stage_to_remove in levels_from_template:
-                    levels_from_template.remove(stage_to_remove)
-            st.session_state.custom_levels = levels_from_template
-        else:
-            st.markdown(f"Using template: **{st.session_state.selected_template}**")
-            levels_from_template = TEMPLATES[st.session_state.selected_template].copy()
-            # For other templates, remove Invoice/Payment and add them back at the end
-            for required in ["Invoice", "Payment"]:
-                if required in levels_from_template:
-                    levels_from_template.remove(required)
-            st.session_state.custom_levels = levels_from_template + ["Invoice", "Payment"]
+    if template == "Onwards":
+        subtemplate = st.selectbox("Subtemplate", ["Foundation", "Work Readiness"])
     else:
-        render_custom_levels_editor()
+        client = st.text_input("Client")
 
-    team_members = get_team_members_username(st.session_state.get("role", ""))
-    st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
-    stage_assignments = render_substage_assignments_editor(st.session_state.custom_levels, team_members, st.session_state.get("stage_assignments", {}))
-    st.session_state.stage_assignments = stage_assignments
+    description = st.text_area("Description")
+    start = st.date_input("Start Date")
+    due = st.date_input("Due Date")
 
-    if stage_assignments:
-        assignment_issues = validate_stage_assignments(stage_assignments, st.session_state.custom_levels)
-        if assignment_issues:
-            for issue in assignment_issues:
-                st.warning(f"⚠️ {issue}")
+    created_by = st.session_state.get("username", "")
 
-    render_progress_section("create")
+    # --- NEW: Co-Manager section ---
+    st.markdown("### 👥 Co-Managers")
 
-    # --- NEW: Co-Manager in create form ---
-    st.subheader("Co-Manager")
-    co_manager = None
-    if st.checkbox("➕ Add Co-Manager", key="add_co_manager_create"):
-        team_members = get_team_members_username(st.session_state.get("role", ""))
-        cm_user = st.selectbox("Select Co-Manager", options=team_members, key="cm_user_create")
-        cm_access = st.radio("Access Type", ["Full Project Access", "Stage-Limited Access"], key="cm_access_create")
-        if cm_access == "Stage-Limited Access":
-            cm_stages = st.multiselect("Select allowed stages", st.session_state.custom_levels, key="cm_stages_create")
-            co_manager = {"user": cm_user, "access": "limited", "stages": cm_stages}
-        else:
-            co_manager = {"user": cm_user, "access": "full"}
+    # Fetch all usernames from DB, excluding creator
+    from backend.users_backend import get_all_users
+    all_users = get_all_users()
+    usernames = [
+        u.get("username") for u in all_users
+        if u.get("username") and u.get("username") != created_by
+    ]
 
+    co_managers = []
+    num_cms = st.number_input("Number of Co-Managers", min_value=0, max_value=5, value=0, step=1)
 
-    if st.button("✅ Create Project", use_container_width=True):
-        _handle_create_project(name, client, description, start, due, selected_subtemplate,co_manager   )
+    for i in range(num_cms):
+        st.markdown(f"#### Co-Manager #{i+1}")
+        col1, col2 = st.columns(2)
+        with col1:
+            cm_user = st.selectbox(
+                f"Select User (Co-Manager #{i+1})",
+                [""] + usernames,
+                key=f"cm_user_{i}"
+            )
+        with col2:
+            cm_access = st.selectbox(
+                f"Access Type (Co-Manager #{i+1})",
+                ["full", "limited"],
+                key=f"cm_access_{i}"
+            )
+
+        cm_stages = []
+        if cm_access == "limited":
+            # --- Reactive stage list based on template ---
+            if template in TEMPLATES:
+                all_stages = TEMPLATES[template].get("stages", [])
+            else:
+                all_stages = []
+
+            cm_stages = st.multiselect(
+                f"Allowed Stages (Co-Manager #{i+1})",
+                all_stages,
+                key=f"cm_stages_{i}"
+            )
+
+        if cm_user:
+            co_managers.append({
+                "user": cm_user,
+                "access": cm_access,
+                "stages": cm_stages
+            })
+    # --- End Co-Manager section ---
+
+    # Stage assignments (existing logic in your app)
+    stage_assignments = {}
+
+    if st.button("✅ Create Project"):
+        pid = _handle_create_project(
+            name,
+            client,
+            description,
+            start,
+            due,
+            template,
+            subtemplate,
+            stage_assignments,
+            created_by,
+            co_managers=co_managers
+        )
+        if pid:
+            st.session_state.view = "dashboard"
+            st.rerun()
 
 
 def show_edit_form():
@@ -355,7 +313,26 @@ def show_edit_form():
         created_by = current_project.get("created_by", "")
         co_managers = current_project.get("co_managers", [])
         is_creator = (created_by == username)
-        is_co_manager = any(cm.get("user") == username for cm in co_managers)
+        #is_co_manager = any(cm.get("user") == username for cm in co_managers)
+        is_co_manager = False
+        allowed_stages = []
+
+        for cm in co_managers:
+            if cm.get("user") == username:
+                if cm.get("access") == "full":
+                    is_co_manager = True
+                    allowed_stages = project.get("levels", [])  # all stages
+                elif cm.get("access") == "limited":
+                    is_co_manager = True
+                    allowed_stages = cm.get("stages", [])
+                break
+
+        if not (is_creator or is_co_manager):
+            st.error("🚫 You do not have permission to edit this project.")
+            st.session_state.view = "dashboard"
+            st.rerun()
+            return
+
 
         if not (is_creator or is_co_manager):
             st.error("🚫 You do not have permission to edit this project.")
@@ -397,7 +374,6 @@ def show_edit_form():
             st.warning(f"⚠ Current client '{current_client}' not found in client list. Please select a new client.")
             client = st.selectbox("👤 Client", options=clients)
     else:
-        # For Onwards projects, don't show client field but preserve existing client value
         client = project.get("client", "")
         if client:
             st.info(f"👤 Client field hidden for Onwards template. Current client: {client}")
@@ -406,39 +382,79 @@ def show_edit_form():
     start = st.date_input("📅 Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
     due = st.date_input("📅 Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
 
-     # --- NEW: Co-Manager section ---
-    st.subheader("Co-Manager")
-    existing_cm = project.get("co_manager")
-    if existing_cm:
-        cm_user = existing_cm.get("user", "-")
-        cm_access = existing_cm.get("access", "full")
+    # --- NEW: Multi Co-Managers Section ---
+    st.subheader("👥 Co-Managers")
+    existing_cms = project.get("co_managers", [])
+
+    if existing_cms:
+        st.markdown("**Current Co-Managers:**")
+        for cm in existing_cms:
+            cm_user = cm.get("user", "-")
+            cm_access = cm.get("access", "full")
+            if cm_access == "limited":
+                stages = ", ".join(cm.get("stages", [])) or "No stages selected"
+                st.info(f"• {cm_user} (Limited Access: {stages})")
+            else:
+                st.info(f"• {cm_user} (Full Access)")
+
+    num_cms = st.number_input(
+        "Number of Co-Managers",
+        min_value=0,
+        max_value=5,
+        value=len(existing_cms),
+        step=1,
+        key=f"num_co_managers_{pid}"
+    )
+
+    co_managers = []
+    team_members = get_team_members_username(st.session_state.get("role", ""))
+    for i in range(num_cms):
+        st.markdown(f"#### Co-Manager #{i+1}")
+        col1, col2 = st.columns(2)
+        with col1:
+            cm_user = st.selectbox(
+                f"Select User (Co-Manager #{i+1})",
+                [""] + team_members,
+                index=(team_members.index(existing_cms[i]["user"]) + 1) if i < len(existing_cms) and existing_cms[i]["user"] in team_members else 0,
+                key=f"cm_user_edit_{pid}_{i}"
+            )
+        with col2:
+            cm_access = st.selectbox(
+                f"Access Type (Co-Manager #{i+1})",
+                ["full", "limited"],
+                index=(["full", "limited"].index(existing_cms[i]["access"])) if i < len(existing_cms) else 0,
+                key=f"cm_access_edit_{pid}_{i}"
+            )
+
+        cm_stages = []
         if cm_access == "limited":
-            stages = ", ".join(existing_cm.get("stages", [])) or "No stages selected"
-            st.info(f"Current Co-Manager: **{cm_user}** (Limited Access: {stages})")
-        else:
-            st.info(f"Current Co-Manager: **{cm_user}** (Full Access)")
-    
-    if st.button("➕ Add / Change Co-Manager", key=f"add_co_manager_{pid}"):
-        st.session_state[f"show_co_manager_{pid}"] = True
+            all_stages = project.get("levels", [])
+            cm_stages = st.multiselect(
+                f"Allowed Stages (Co-Manager #{i+1})",
+                all_stages,
+                default=existing_cms[i].get("stages", []) if i < len(existing_cms) else [],
+                key=f"cm_stages_edit_{pid}_{i}"
+            )
 
-    if st.session_state.get(f"show_co_manager_{pid}", False):
-        team_members = get_team_members_username(st.session_state.get("role", ""))
-        co_manager = st.selectbox("Select Co-Manager", options=team_members, key=f"co_manager_select_{pid}")
-        access_type = st.radio("Access Type", ["Full Project Access", "Stage-Limited Access"], key=f"co_manager_access_{pid}")
-        if access_type == "Stage-Limited Access":
-            stages = project.get("levels", [])
-            allowed_stages = st.multiselect("Select allowed stages", stages, key=f"co_manager_stages_{pid}")
-            project["co_manager"] = {"user": co_manager, "access": "limited", "stages": allowed_stages}
-        else:
-            project["co_manager"] = {"user": co_manager, "access": "full"}
-    if existing_cm and st.button("❌ Remove Co-Manager", key=f"remove_cm_{pid}"):
-        project.pop("co_manager", None)
-        st.success("Co-Manager removed. Save changes to apply.")
+        if cm_user:
+            co_managers.append({
+                "user": cm_user,
+                "access": cm_access,
+                "stages": cm_stages
+            })
 
+    # Save co-managers back to project
+    project["co_managers"] = co_managers
+
+    # --- Stage Assignments ---
     team_members = get_team_members_username(st.session_state.get("role", ""))
     st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
     current_stage_assignments = project.get("stage_assignments", {})
-    stage_assignments = render_substage_assignments_editor(project.get("levels", ["Initial", "Invoice", "Payment"]), team_members, current_stage_assignments)
+    stage_assignments = render_substage_assignments_editor(
+        project.get("levels", ["Initial", "Invoice", "Payment"]),
+        team_members,
+        current_stage_assignments,
+    )
     if stage_assignments:
         assignment_issues = validate_stage_assignments(stage_assignments, project.get("levels", []))
         if assignment_issues:
@@ -449,14 +465,47 @@ def show_edit_form():
         st.error("🔴 Overdue Stages:")
         for overdue in overdue_stages:
             st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue (Due: {overdue['deadline']})")
+
+    # --- Progress Section ---
     st.subheader("Progress")
     def on_change_edit(new_index):
         fresh_proj = get_project_by_name(project_name)
         fresh_assignments = fresh_proj.get("stage_assignments", {}) if fresh_proj else {}
         handle_level_change(fresh_proj or project, pid, new_index, fresh_assignments, "edit")
-    render_level_checkboxes_with_substages("edit", pid, int(project.get("level", -1)), project.get("timestamps", {}), project.get("levels", ["Initial", "Invoice", "Payment"]), on_change_edit, editable=True, stage_assignments=current_stage_assignments, project=project)
+        if role != "user":
+            st.rerun()
+        else:
+             # ✅ Update just this project’s level in session_state
+            for idx, p in enumerate(st.session_state.projects):
+                if p["id"] == pid:
+                    st.session_state.projects[idx]["level"] = new_index
+                    break
+            st.success("✅ Progress updated (no refresh needed)")
+
+    render_level_checkboxes_with_substages(
+        "edit", pid, int(project.get("level", -1)),
+        project.get("timestamps", {}),
+        project.get("levels", ["Initial", "Invoice", "Payment"]),
+        on_change_edit,
+        editable=True,
+        stage_assignments=current_stage_assignments,
+        project=project,
+        editable_stages=allowed_stages if role == "user" else None
+    )
+
+    # --- Save Button ---
     if st.button("💾 Save", use_container_width=True):
         handle_save_project(pid, project, name, client, description, start, due, original_name, stage_assignments)
+        if role != "user":   # 🚫 Prevent rerun for user
+            st.rerun()
+        else:
+           # ✅ Update the in-memory project list
+            for idx, p in enumerate(st.session_state.projects):
+                if p["id"] == pid:
+                    st.session_state.projects[idx] = project
+                    break
+            st.success("✅ Changes saved (no refresh needed)")
+            st.session_state.view = "dashboard"
 
 def _render_back_button():
     """Enhanced back button with cleanup"""

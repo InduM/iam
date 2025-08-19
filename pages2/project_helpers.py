@@ -4,8 +4,15 @@ from utils.utils_project_core import send_stage_assignment_email
 from backend.projects_backend import update_client_project_count
 from backend.users_backend import DatabaseManager, UserService
 
-def create_project_data(name, client, description, start, due):
+def create_project_data(name, client, description, start, due,co_managers=None):
     """Create project data dictionary"""
+
+    if isinstance(co_managers, dict):
+        co_managers = [co_managers]
+    elif co_managers is None:
+        co_managers = []
+    elif not isinstance(co_managers, list):
+        co_managers = []
     return {
         "name": name,
         "client": client,
@@ -17,13 +24,22 @@ def create_project_data(name, client, description, start, due):
         "level": st.session_state.level_index,
         "timestamps": st.session_state.level_timestamps.copy(),
         "stage_assignments": st.session_state.stage_assignments.copy(),
+        "co_managers": co_managers,
         "created_at": datetime.now().isoformat(),
         "updated_at": datetime.now().isoformat(),
         "created_by": st.session_state.get("username", "unknown"),
     }
 
-def create_updated_project_data(project, name, client, description, start, due, stage_assignments):
+def create_updated_project_data(project, name, client, description, start, due, stage_assignments,co_managers=None):
     """Create updated project data dictionary including substage data"""
+    # --- Normalize co-managers ---
+    if isinstance(co_managers, dict):
+        co_managers = [co_managers]
+    elif co_managers is None:
+        co_managers = []
+    elif not isinstance(co_managers, list):
+        co_managers = []
+
     updated_data = {
         "name": name,
         "client": client,
@@ -35,7 +51,8 @@ def create_updated_project_data(project, name, client, description, start, due, 
         "created_at": project.get("created_at", datetime.now().isoformat()),
         "levels": project.get("levels", ["Initial", "Invoice", "Payment"]),
         "level": project.get("level", -1),
-        "timestamps": project.get("timestamps", {})
+        "timestamps": project.get("timestamps", {}),
+        "co_managers": co_managers,
     }
     
     # Include substage completion data if it exists

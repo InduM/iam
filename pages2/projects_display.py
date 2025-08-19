@@ -164,15 +164,17 @@ def render_project_card(project, index):
             st.markdown(f"**Due:** {project.get('dueDate', '-')}")
         
         st.markdown(f"**Manager:** {project.get('created_by', '-')}")
-        if project.get("co_manager"):
-            cm = project["co_manager"]
-            cm_user = cm.get("user", "-")
-            cm_access = cm.get("access", "full")
-            if cm_access == "limited":
-                stages = ", ".join(cm.get("stages", [])) or "No stages selected"
-                st.markdown(f"**Co-Manager:** {cm_user} (Limited Access: {stages})")
-            else:
-                st.markdown(f"**Co-Manager:** {cm_user} (Full Access)")
+        co_managers = project.get("co_managers", [])
+        if co_managers:
+            st.markdown("**👥 Co-Managers:**")
+            for cm in co_managers:
+                cm_user = cm.get("user", "-")
+                cm_access = cm.get("access", "full")
+                if cm_access == "limited":
+                    stages = ", ".join(cm.get("stages", [])) or "No stages selected"
+                    st.write(f"- {cm_user} (Limited Access: {stages})")
+                else:
+                    st.write(f"- {cm_user} (Full Access)")
         
         levels = project.get("levels", ["Initial", "Invoice", "Payment"])
         current_level = project.get("level", -1)
@@ -230,9 +232,16 @@ def render_project_card(project, index):
                     return
             
             handle_level_change(proj,proj_id, new_index, stage_assignments,"dashboard")
-        
-    
-        
+            if st.session_state.get("role") != "user":   # 🚫 Prevent rerun for user
+                st.rerun()
+            else:
+            # ✅ Update just this project’s level in session_state
+                for idx, p in enumerate(st.session_state.projects):
+                    if p["id"] == proj_id:
+                        st.session_state.projects[idx]["level"] = new_index
+                        break
+                st.success("✅ Progress updated (no refresh needed)")
+            
         # Auto-advance and auto-uncheck messages
         for i in range(len(levels)):
             auto_advance_key = f"auto_advance_success_{pid}_{i}"
@@ -258,8 +267,12 @@ def render_project_card(project, index):
         _render_project_action_buttons(project, pid)
 
 def render_level_checkboxes_with_substages(context, project_id, current_level, timestamps, levels, 
-                                         on_change, editable=False, stage_assignments=None, project=None):
+                                         on_change, editable=False, stage_assignments=None, project=None, editable_stages=None):
     """Enhanced level checkboxes that also show substages with validation"""
+
+    
+
+
     if not levels:
         st.warning("No levels defined for this project.")
         return

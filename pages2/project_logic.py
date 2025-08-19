@@ -1,6 +1,6 @@
 import streamlit as st
 import time
-
+from datetime import datetime
 from utils.utils_project_user_sync import(
     _sync_user_projects_on_stage_change
 )
@@ -70,17 +70,26 @@ def _handle_create_project(name, client, description, start, due, template, subt
             st.error(f"• {user}")
         return None
 
+    if co_managers is None:
+        co_managers = []
+
+    # --- Normalize old format ---
+    if isinstance(co_managers, dict):  
+        co_managers = [co_managers]
+
     project_data = {
         "name": name,
         "client": client,
         "description": description,
-        "startDate": start.isoformat(),
-        "dueDate": due.isoformat(),
+        "startDate": str(start),
+        "dueDate": str(due),
         "template": template,
         "subtemplate": subtemplate,
-        "created_by": created_by,
         "stage_assignments": stage_assignments,
-        "co_managers": co_managers or []
+        "created_by": created_by,
+        "co_managers": co_managers,   # ✅ always list
+        "created_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
     }
 
     pid = insert_project_to_db(project_data)
@@ -111,7 +120,7 @@ def _handle_create_project(name, client, description, start, due, template, subt
 # UPDATED FUNCTION: Enhanced save project handler with date validation
 # update logic in https://claude.ai/chat/22923190-8e0c-458d-a860-ed65ffb2a9a0
 def handle_save_project(pid, project, name, client, description, start, due, original_name, stage_assignments):
-    """Enhanced save project handler with co-manager logging"""
+    """Enhanced save project handler with co-manager persistence and logging"""
     if not validate_project_dates(start, due):
         st.error("Cannot save: Due date must be later than the start date.")
         return
@@ -142,9 +151,8 @@ def handle_save_project(pid, project, name, client, description, start, due, ori
     # Build updated project dict
     updated_project = create_updated_project_data(project, name, client, description, start, due, stage_assignments)
 
-    # Preserve co-managers if present
-    if "co_managers" in project:
-        updated_project["co_managers"] = project["co_managers"]
+    # --- Ensure co-managers are persisted ---
+    updated_project["co_managers"] = project.get("co_managers", [])
 
     new_assignments = updated_project.get("stage_assignments", {})
 
@@ -254,7 +262,6 @@ def handle_save_project(pid, project, name, client, description, start, due, ori
 
         st.session_state.view = "dashboard"
         st.rerun()
-
 
 def _handle_project_deletion(pid, project):
     """Delete a project with permission checks, cleanup, and deletion logging"""
