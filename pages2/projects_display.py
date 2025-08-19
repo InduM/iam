@@ -365,19 +365,209 @@ def render_level_checkboxes_with_substages(context, project_id, current_level, t
                     # Create a slightly indented container for substages
                     with st.container():
                         st.markdown("") # Add some spacing
+                        
+                        # Check if limited user can edit deadlines for this stage
+                        allow_deadline_edit = False
+                        if editable_stages is not None and stage_is_editable:
+                            allow_deadline_edit = True
+                        
                         render_substage_progress_with_edit(
                             project, project_id, i, substages, 
-                            editable and stage_is_editable  # Pass stage editability to substages
+                            editable and stage_is_editable,  # Pass stage editability to substages
+                            allow_deadline_edit,  # Allow deadline editing for limited users
+                            level  # Pass stage name for context
                         )
                         st.markdown("---") # Add separator after substages
 
-def render_substage_progress_with_edit(project, project_id, stage_index, substages, editable=False):
+ #New function: Limited substage assignments editor for restricted users
+def render_limited_substage_assignments_editor(levels, team_members, current_assignments, allowed_stages, project_id):
+    """Render substage assignment editor for limited access users - can only edit allowed stages"""
+    updated_assignments = current_assignments.copy()
+    
+    st.info(f"🔒 Limited Access: You can only edit substages for stages: {', '.join(allowed_stages)}")
+    
+    for level_idx, level_name in enumerate(levels):
+        stage_key = str(level_idx)
+        
+        # Check if this stage is allowed for editing
+        stage_editable = level_name in allowed_stages
+        
+        with st.expander(f"Stage {level_idx + 1}: {level_name}" + (" 🔒" if not stage_editable else " ✏️"), 
+                        expanded=stage_editable):
+            
+            if not stage_editable:
+                st.warning("🔒 You don't have permission to edit this stage's substages.")
+                # Show read-only view of existing substages
+                if stage_key in current_assignments:
+                    existing_assignment = current_assignments[stage_key]
+                    if isinstance(existing_assignment, dict):
+                        assigned_to = existing_assignment.get("assigned_to", "Unassigned")
+                        deadline = existing_assignment.get("deadline", "No deadline")
+                        substages = existing_assignment.get("substages", [])
+                        
+                        st.info(f"📋 Assigned to: {assigned_to}")
+                        st.info(f"📅 Deadline: {deadline}")
+                        
+                        if substages:
+                            st.info(f"📝 Substages ({len(substages)}):")
+                            for idx, substage in enumerate(substages):
+                                substage_name = substage.get("name", f"Substage {idx + 1}")
+                                substage_deadline = substage.get("deadline", "No deadline")
+                                st.caption(f"  • {substage_name} (Due: {substage_deadline})")
+                        else:
+                            st.caption("No substages defined")
+                continue
+            
+            # Editable stage - allow full substage management
+            existing_assignment = current_assignments.get(stage_key, {})
+            
+            # Team member assignment (read-only for limited users in this context)
+            if isinstance(existing_assignment, dict):
+                current_assignee = existing_assignment.get("assigned_to", "")
+                if current_assignee in team_members:
+                    assigned_to = st.selectbox(
+                        f"👤 Assigned to:",
+                        team_members,
+                        index=team_members.index(current_assignee),
+                        key=f"limited_assign_{project_id}_{stage_key}",
+                        disabled=True,  # Read-only for limited users
+                        help="Contact a manager to change stage assignments"
+                    )
+                else:
+                    st.info(f"📋 Currently assigned to: {current_assignee or 'Unassigned'}")
+                    assigned_to = current_assignee
+            else:
+                st.info("📋 Currently assigned to: Unassigned")
+                assigned_to = ""
+            
+            # Stage deadline (editable for limited users)
+            current_deadline = None
+            if isinstance(existing_assignment, dict):
+                deadline_str = existing_assignment.get("deadline")
+                if deadline_str and deadline_str != "No deadline":
+                    try:
+                        current_deadline = datetime.fromisoformat(deadline_str).date()
+                    except:
+                        current_deadline = None
+            
+            deadline = st.date_input(
+                f"📅 Stage Deadline:",
+                value=current_deadline,
+                key=f"limited_deadline_{project_id}_{stage_key}"
+            )
+            deadline_str = deadline.isoformat() if deadline else "No deadline"
+            
+            # Substages management (fully editable for limited users)
+            st.markdown("#### 📝 Substages")
+            
+            existing_substages = []
+            if isinstance(existing_assignment, dict):
+                existing_substages = existing_assignment.get("substages", [])
+            
+            # Initialize substages in session state if not present
+            substages_key = f"limited_substages_{project_id}_{stage_key}"
+            if substages_key not in st.session_state:
+                st.session_state[substages_key] = existing_substages.copy() if existing_substages else []
+            
+            current_substages = st.session_state[substages_key]
+            
+            # Add substage button
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                new_substage_name = st.text_input(
+                    "New substage name:",
+                    key=f"limited_new_substage_{project_id}_{stage_key}",
+                    placeholder="Enter substage name..."
+                )
+            with col2:
+                if st.button("➕ Add", key=f"limited_add_substage_{project_id}_{stage_key}"):
+                    if new_substage_name.strip():
+                        new_substage = {
+                            "name": new_substage_name.strip(),
+                            "deadline": "",
+                            "start_date": ""
+                        }
+                        st.session_state[substages_key].append(new_substage)
+                        # Clear the input
+                        st.session_state[f"limited_new_substage_{project_id}_{stage_key}"] = ""
+                        st.rerun()
+                    else:
+                        st.error("Please enter a substage name")
+            
+            # Display and edit existing substages
+            if current_substages:
+                st.markdown("**Current Substages:**")
+                substages_to_remove = []
+                
+                for idx, substage in enumerate(current_substages):
+                    with st.container():
+                        st.markdown(f"**Substage {idx + 1}**")
+                        
+                        col1, col2, col3 = st.columns([3, 2, 1])
+                        
+                        with col1:
+                            substage_name = st.text_input(
+                                "Name:",
+                                value=substage.get("name", ""),
+                                key=f"limited_substage_name_{project_id}_{stage_key}_{idx}"
+                            )
+                        
+                        with col2:
+                            substage_deadline = st.date_input(
+                                "Deadline:",
+                                value=datetime.fromisoformat(substage.get("deadline")).date() if substage.get("deadline") else None,
+                                key=f"limited_substage_deadline_{project_id}_{stage_key}_{idx}"
+                            )
+                        
+                        with col3:
+                            if st.button("🗑️", key=f"limited_remove_substage_{project_id}_{stage_key}_{idx}", 
+                                        help="Remove substage"):
+                                substages_to_remove.append(idx)
+                        
+                        # Additional substage options
+                        with st.expander("📋 Additional Options", expanded=False):
+                            substage_start_date = st.date_input(
+                                "Start Date (optional):",
+                                value=datetime.fromisoformat(substage.get("start_date")).date() if substage.get("start_date") else None,
+                                key=f"limited_substage_start_{project_id}_{stage_key}_{idx}"
+                            )
+                        
+                        # Update substage data
+                        current_substages[idx] = {
+                            "name": substage_name,
+                            "deadline": substage_deadline.isoformat() if substage_deadline else "",
+                            "start_date": substage_start_date.isoformat() if substage_start_date else ""
+                        }
+                        
+                        st.markdown("---")
+                
+                # Remove substages marked for deletion
+                for idx in reversed(substages_to_remove):
+                    current_substages.pop(idx)
+                    st.rerun()
+            else:
+                st.info("No substages defined for this stage.")
+            
+            # Update the assignments with the current data
+            updated_assignments[stage_key] = {
+                "assigned_to": assigned_to,
+                "deadline": deadline_str,
+                "substages": current_substages
+            }
+    
+    return updated_assignments
+                        
+def render_substage_progress_with_edit(project, project_id, stage_index, substages, editable=False, 
+                                     allow_deadline_edit=False, stage_name=None):
     """Render substage progress with real-time editing capability and validation - Updated with stage restrictions"""
     if not substages:
         return
     
     # Use a more prominent header for substages
-    st.markdown(f"**Substages**")
+    header_text = f"**Substages**"
+    if allow_deadline_edit and stage_name:
+        header_text += f" - {stage_name} (Editable)"
+    st.markdown(header_text)
     
     is_form_context = _detect_form_context(project_id)
     
@@ -395,7 +585,7 @@ def render_substage_progress_with_edit(project, project_id, stage_index, substag
     
     substage_changed = False
     substage_unchecked = False
-    
+    deadline_changed = False
     # Find the highest completed substage for sequential logic
     highest_completed_substage = -1
     for idx in range(len(substages)):
@@ -861,6 +1051,7 @@ def render_progress_section(form_type):
         editable=True, stage_assignments=stage_assignments, project=mock_project
     )
 
+# Updated _render_project_action_buttons function with enhanced permission checks
 def _render_project_action_buttons(project, pid):
     """Render project action buttons (Edit/Delete) with enhanced role-based restrictions"""
     role = st.session_state.get("role", "")
