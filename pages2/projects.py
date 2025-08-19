@@ -7,12 +7,11 @@ from backend.projects_backend import *
 from utils.utils_project_core import *
 from utils.utils_project_substage import *
 from utils.utils_project_user_sync import _initialize_services
-from utils.utils_project_form import initialize_create_form_state
-from .projects_state_management import (_render_back_button)
+from utils.utils_project_form import ( initialize_create_form_state,render_custom_levels_editor)
+from .projects_state_management import (_render_back_button,_render_edit_header_with_refresh,_initialize_edit_mode_state)
+from .project_substage_manager import render_progress_section
 from .projects_display import (
-    render_project_card, render_level_checkboxes_with_substages,
-    render_custom_levels_editor, render_progress_section
-)
+    render_project_card, render_level_checkboxes_with_substages)
 from .project_logic import (
     _handle_create_project,
     handle_save_project,
