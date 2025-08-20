@@ -46,8 +46,14 @@ from .project_date_utils import (
     validate_stage_substage_dates,
 )
 
-def _handle_create_project(name, client, description, start, due, template, subtemplate, stage_assignments, created_by, co_managers=None):
+def _handle_create_project(
+    name, client, description, start, due,
+    template, subtemplate, stage_assignments,
+    created_by, co_managers=None
+):
     """Handles new project creation, with optional co-manager logging"""
+
+    # --- Validation ---
     if not validate_project_dates(start, due):
         st.error("Cannot create project: Due date must be later than the start date.")
         return None
@@ -70,6 +76,12 @@ def _handle_create_project(name, client, description, start, due, template, subt
             st.error(f"• {user}")
         return None
 
+    # --- Construct project document ---
+    from datetime import datetime
+    now = datetime.now()
+    levels = [s.get("stage_name", f"Stage {i+1}") for i, s in stage_assignments.values()] \
+             if isinstance(stage_assignments, dict) else []
+
     project_data = {
         "name": name,
         "client": client,
@@ -78,35 +90,45 @@ def _handle_create_project(name, client, description, start, due, template, subt
         "dueDate": due.isoformat(),
         "template": template,
         "subtemplate": subtemplate,
-        "created_by": created_by,
+        "levels": levels,
+        "level": 0,
+        "timestamps": {"0": now.strftime("%Y-%m-%d %H:%M:%S")},
         "stage_assignments": stage_assignments,
+        "created_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+        "created_by": created_by,
         "co_managers": co_managers or []
     }
 
     pid = insert_project_to_db(project_data)
+
     if pid:
         st.success("✅ Project created successfully")
 
-        # --- NEW: Co-Manager logging ---
+        # --- Co-Manager logging ---
         if co_managers:
             from backend.log_backend import ProjectLogManager
+            from bson import ObjectId
             log_manager = ProjectLogManager()
-            username = st.session_state.get("username", "")
-            role = st.session_state.get("role", "")
+            username = st.session_state.get("username", "?")
+
             for cm in co_managers:
                 log_manager.create_log_entry({
+                    "project_id": ObjectId(pid),
                     "project": name,
-                    "action": "co_manager_added",
+                    "event": "co_manager_added",
+                    "message": f"Initial Co-Manager {cm['user']} ({cm.get('access','full')})",
                     "performed_by": username,
-                    "role": role,
-                    "details": f"Initial Co-Manager {cm['user']} ({cm.get('access','full')})"
+                    "created_at": now,
+                    "updated_at": now
                 })
-        # --- End new logging ---
+        # --- End logging ---
 
         return pid
     else:
         st.error("❌ Failed to create project")
         return None
+
                                                 
 # UPDATED FUNCTION: Enhanced save project handler with date validation
 # update logic in https://claude.ai/chat/22923190-8e0c-458d-a860-ed65ffb2a9a0

@@ -352,16 +352,16 @@ def show_edit_form():
     # --- Permission check ---
     role = st.session_state.get("role", "")
     username = st.session_state.get("username", "")
-    if role == "user":
-        created_by = current_project.get("created_by", "")
-        co_managers = current_project.get("co_managers", [])
-        is_creator = (created_by == username)
-        is_co_manager = any(cm.get("user") == username for cm in co_managers)
-        if not (is_creator or is_co_manager):
-            st.error("🚫 You do not have permission to edit this project.")
-            st.session_state.view = "dashboard"
-            st.rerun()
-            return
+    created_by = current_project.get("created_by", "")
+    co_managers = current_project.get("co_managers", [])
+    is_creator = (created_by == username)
+    user_cm = next((cm for cm in co_managers if cm.get("user") == username), None)
+    is_co_manager = bool(user_cm)
+    if role == "user" and not (is_creator or is_co_manager):
+        st.error("🚫 You do not have permission to edit this project.")
+        st.session_state.view = "dashboard"
+        st.rerun()
+        return
     # --- End permission check ---
 
     fresh_project = get_project_by_name(project_name)
@@ -513,15 +513,27 @@ def show_edit_form():
     # --- Stage Assignments ---
     st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
     current_stage_assignments = project.get("stage_assignments", {})
+
+    # Determine allowed stages for current user
+    allowed_stages = project.get("levels", ["Initial", "Invoice", "Payment"])
+    if role == "user" and user_cm and user_cm.get("access") == "limited":
+        allowed_stages = user_cm.get("stages", [])
+        if not allowed_stages:
+            st.warning("⚠️ You have no stage permissions in this project.")
+            return
+
     stage_assignments = render_substage_assignments_editor(
-        project.get("levels", ["Initial", "Invoice", "Payment"]),
-        team_members, current_stage_assignments
+        allowed_stages,
+        team_members,
+        {k: v for k, v in current_stage_assignments.items() if v.get("stage_name") in allowed_stages}
     )
+
     if stage_assignments:
         assignment_issues = validate_stage_assignments(stage_assignments, project.get("levels", []))
         if assignment_issues:
             for issue in assignment_issues:
                 st.warning(f"⚠️ {issue}")
+
     overdue_stages = get_overdue_stages(current_stage_assignments, project.get("levels", []), project.get("level", -1))
     if overdue_stages:
         st.error("🔴 Overdue Stages:")
@@ -530,15 +542,22 @@ def show_edit_form():
 
     # --- Progress ---
     st.subheader("Progress")
+
     def on_change_edit(new_index):
         fresh_proj = get_project_by_name(project_name)
         fresh_assignments = fresh_proj.get("stage_assignments", {}) if fresh_proj else {}
         handle_level_change(fresh_proj or project, pid, new_index, fresh_assignments, "edit")
 
     render_level_checkboxes_with_substages(
-        "edit", pid, int(project.get("level", -1)),
-        project.get("timestamps", {}), project.get("levels", ["Initial", "Invoice", "Payment"]),
-        on_change_edit, editable=True, stage_assignments=current_stage_assignments, project=project
+        "edit",
+        pid,
+        int(project.get("level", -1)),
+        project.get("timestamps", {}),
+        allowed_stages,  # 🔒 restricted here
+        on_change_edit,
+        editable=True,
+        stage_assignments=current_stage_assignments,
+        project=project
     )
 
     # --- Save project general fields ---
