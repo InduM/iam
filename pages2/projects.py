@@ -327,11 +327,16 @@ def show_create_form():
 
 
 def show_edit_form():
+    from backend.projects_backend import update_project_field
+    from backend.log_backend import ProjectLogManager
+    from bson import ObjectId
+    from datetime import datetime
+
     pid = st.session_state.edit_project_id
     current_project = next((p for p in st.session_state.projects if p["id"] == pid), None)
     project_name = current_project.get("name", "") if current_project else ""
     _render_edit_header_with_refresh(project_name, pid)
-    
+
     if st.session_state.get(f"edit_refresh_success_{pid}", False):
         st.success("✅ Project data refreshed from database!")
         del st.session_state[f"edit_refresh_success_{pid}"]
@@ -339,21 +344,19 @@ def show_edit_form():
         _initialize_edit_mode_state(pid)
         st.session_state[f"edit_initialized_{pid}"] = True
         st.rerun()
-    
+
     if not current_project:
         st.error("Project not found.")
         return
-    
+
     # --- Permission check ---
     role = st.session_state.get("role", "")
     username = st.session_state.get("username", "")
-
     if role == "user":
         created_by = current_project.get("created_by", "")
         co_managers = current_project.get("co_managers", [])
         is_creator = (created_by == username)
         is_co_manager = any(cm.get("user") == username for cm in co_managers)
-
         if not (is_creator or is_co_manager):
             st.error("🚫 You do not have permission to edit this project.")
             st.session_state.view = "dashboard"
@@ -367,21 +370,20 @@ def show_edit_form():
         return
     project = ensure_project_defaults(fresh_project)
     original_name = project.get("name", "")
-    
+
     st.markdown("<div class='section-header'>Project Details</div>", unsafe_allow_html=True)
     name = st.text_input("📝 Project Name", value=project.get("name", ""))
-    
-    # Show template and subtemplate info (read-only for existing projects)
+
+    # Template and subtemplate info
     project_template = project.get("template", "")
     project_subtemplate = project.get("subtemplate", "")
-    
     if project_template:
         if project_template == "Onwards" and project_subtemplate:
             st.info(f"📂 Template: **{project_template}** - **{project_subtemplate}**")
         else:
             st.info(f"📂 Template: **{project_template}**")
-    
-    # Only show client field if project template is NOT "Onwards"
+
+    # Client field
     client = ""
     if project_template != "Onwards":
         clients = get_all_clients()
@@ -394,48 +396,127 @@ def show_edit_form():
             st.warning(f"⚠ Current client '{current_client}' not found in client list. Please select a new client.")
             client = st.selectbox("👤 Client", options=clients)
     else:
-        # For Onwards projects, don't show client field but preserve existing client value
         client = project.get("client", "")
         if client:
             st.info(f"👤 Client field hidden for Onwards template. Current client: {client}")
-    
+
     description = st.text_area("🗒 Project Description", value=project.get("description", ""))
     start = st.date_input("📅 Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
     due = st.date_input("📅 Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
 
-     # --- NEW: Co-Manager section ---
-    st.subheader("Co-Manager")
-    existing_cm = project.get("co_manager")
-    if existing_cm:
-        cm_user = existing_cm.get("user", "-")
-        cm_access = existing_cm.get("access", "full")
-        if cm_access == "limited":
-            stages = ", ".join(existing_cm.get("stages", [])) or "No stages selected"
-            st.info(f"Current Co-Manager: **{cm_user}** (Limited Access: {stages})")
-        else:
-            st.info(f"Current Co-Manager: **{cm_user}** (Full Access)")
-    
-    if st.button("➕ Add / Change Co-Manager", key=f"add_co_manager_{pid}"):
-        st.session_state[f"show_co_manager_{pid}"] = True
+    # --- Multi Co-Managers section ---
+    st.subheader("Co-Managers")
+    existing_cms = project.get("co_managers", [])
+    if not existing_cms:
+        st.caption("No co-managers assigned yet.")
 
-    if st.session_state.get(f"show_co_manager_{pid}", False):
-        team_members = get_team_members_username(st.session_state.get("role", ""))
-        co_manager = st.selectbox("Select Co-Manager", options=team_members, key=f"co_manager_select_{pid}")
-        access_type = st.radio("Access Type", ["Full Project Access", "Stage-Limited Access"], key=f"co_manager_access_{pid}")
-        if access_type == "Stage-Limited Access":
-            stages = project.get("levels", [])
-            allowed_stages = st.multiselect("Select allowed stages", stages, key=f"co_manager_stages_{pid}")
-            project["co_manager"] = {"user": co_manager, "access": "limited", "stages": allowed_stages}
-        else:
-            project["co_manager"] = {"user": co_manager, "access": "full"}
-    if existing_cm and st.button("❌ Remove Co-Manager", key=f"remove_cm_{pid}"):
-        project.pop("co_manager", None)
-        st.success("Co-Manager removed. Save changes to apply.")
-
+    updated_cms = []
     team_members = get_team_members_username(st.session_state.get("role", ""))
+
+    log_manager = ProjectLogManager()
+    actor = st.session_state.get("username", "?")
+
+    for idx, cm in enumerate(existing_cms):
+        st.markdown(f"**Co-Manager {idx+1}:**")
+
+        cm_user = st.selectbox(
+            "User", options=team_members,
+            index=team_members.index(cm.get("user")) if cm.get("user") in team_members else 0,
+            key=f"cm_user_{pid}_{idx}"
+        )
+
+        cm_access = st.radio(
+            "Access Type", ["Full Project Access", "Stage-Limited Access"],
+            index=0 if cm.get("access") == "full" else 1,
+            key=f"cm_access_{pid}_{idx}"
+        )
+
+        if cm_access == "Stage-Limited Access":
+            cm_stages = st.multiselect(
+                "Allowed Stages", project.get("levels", []),
+                default=cm.get("stages", []),
+                key=f"cm_stages_{pid}_{idx}"
+            )
+            updated_cms.append({"user": cm_user, "access": "limited", "stages": cm_stages})
+        else:
+            updated_cms.append({"user": cm_user, "access": "full"})
+
+        # Remove button
+        if st.button(f"❌ Remove {cm_user}", key=f"remove_cm_{pid}_{idx}"):
+            project["co_managers"].pop(idx)
+            update_project_field(pid, {"co_managers": project["co_managers"]})
+
+            log_manager.create_log_entry({
+                "project_id": ObjectId(pid),
+                "project": project.get("name", ""),
+                "event": "co_manager_removed",
+                "message": f"Removed {cm_user}",
+                "performed_by": actor,
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            })
+
+            st.success(f"Removed {cm_user}.")
+            st.rerun()
+
+    # Add new co-manager
+    if st.button("➕ Add Co-Manager", key=f"add_co_manager_{pid}"):
+        st.session_state[f"show_add_cm_{pid}"] = True
+
+    if st.session_state.get(f"show_add_cm_{pid}", False):
+        cm_user = st.selectbox("Select Co-Manager", options=team_members, key=f"cm_user_add_{pid}")
+        cm_access = st.radio("Access Type", ["Full Project Access", "Stage-Limited Access"], key=f"cm_access_add_{pid}")
+        if cm_access == "Stage-Limited Access":
+            cm_stages = st.multiselect("Select allowed stages", project.get("levels", []), key=f"cm_stages_add_{pid}")
+            new_cm = {"user": cm_user, "access": "limited", "stages": cm_stages}
+        else:
+            new_cm = {"user": cm_user, "access": "full"}
+
+        if st.button("✅ Confirm Add", key=f"confirm_add_cm_{pid}"):
+            project.setdefault("co_managers", []).append(new_cm)
+            update_project_field(pid, {"co_managers": project["co_managers"]})
+
+            log_manager.create_log_entry({
+                "project_id": ObjectId(pid),
+                "project": project.get("name", ""),
+                "event": "co_manager_added",
+                "message": f"Added {cm_user} ({new_cm['access']})",
+                "performed_by": actor,
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            })
+
+            st.success(f"Added {cm_user} as co-manager.")
+            st.session_state[f"show_add_cm_{pid}"] = False
+            st.rerun()
+
+    # Replace with updated list (and persist if changed)
+    if updated_cms != existing_cms:
+        project["co_managers"] = updated_cms
+        update_project_field(pid, {"co_managers": project["co_managers"]})
+
+        # Track updates
+        old_users = {cm["user"]: cm for cm in existing_cms}
+        new_users = {cm["user"]: cm for cm in updated_cms}
+        for user, cm in new_users.items():
+            if user in old_users and cm != old_users[user]:
+                log_manager.create_log_entry({
+                    "project_id": ObjectId(pid),
+                    "project": project.get("name", ""),
+                    "event": "co_manager_updated",
+                    "message": f"Updated {user} ({cm['access']})",
+                    "performed_by": actor,
+                    "created_at": datetime.now(),
+                    "updated_at": datetime.now()
+                })
+
+    # --- Stage Assignments ---
     st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
     current_stage_assignments = project.get("stage_assignments", {})
-    stage_assignments = render_substage_assignments_editor(project.get("levels", ["Initial", "Invoice", "Payment"]), team_members, current_stage_assignments)
+    stage_assignments = render_substage_assignments_editor(
+        project.get("levels", ["Initial", "Invoice", "Payment"]),
+        team_members, current_stage_assignments
+    )
     if stage_assignments:
         assignment_issues = validate_stage_assignments(stage_assignments, project.get("levels", []))
         if assignment_issues:
@@ -446,14 +527,24 @@ def show_edit_form():
         st.error("🔴 Overdue Stages:")
         for overdue in overdue_stages:
             st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue (Due: {overdue['deadline']})")
+
+    # --- Progress ---
     st.subheader("Progress")
     def on_change_edit(new_index):
         fresh_proj = get_project_by_name(project_name)
         fresh_assignments = fresh_proj.get("stage_assignments", {}) if fresh_proj else {}
         handle_level_change(fresh_proj or project, pid, new_index, fresh_assignments, "edit")
-    render_level_checkboxes_with_substages("edit", pid, int(project.get("level", -1)), project.get("timestamps", {}), project.get("levels", ["Initial", "Invoice", "Payment"]), on_change_edit, editable=True, stage_assignments=current_stage_assignments, project=project)
+
+    render_level_checkboxes_with_substages(
+        "edit", pid, int(project.get("level", -1)),
+        project.get("timestamps", {}), project.get("levels", ["Initial", "Invoice", "Payment"]),
+        on_change_edit, editable=True, stage_assignments=current_stage_assignments, project=project
+    )
+
+    # --- Save project general fields ---
     if st.button("💾 Save", use_container_width=True):
         handle_save_project(pid, project, name, client, description, start, due, original_name, stage_assignments)
+
 
 
 def _apply_filters(projects, search_query, filter_template, filter_subtemplate, filter_level, filter_due):

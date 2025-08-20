@@ -420,3 +420,19 @@ def update_substage_completion_in_db(project_id, substage_completion):
     except Exception as e:
         st.error(f"Failed to update substage completion: {str(e)}")
         return False
+    
+def update_project_field(project_id: str, updates: dict):
+    """Update specific fields of a project in MongoDB"""
+    try:
+        collections = get_db_collections()
+        projects_collection = collections["projects"]
+
+        object_id = ObjectId(project_id)
+        result = projects_collection.update_one(
+            {"_id": object_id},
+            {"$set": updates}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        st.error(f"Error updating project field(s): {e}")
+        return False

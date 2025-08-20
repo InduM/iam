@@ -37,7 +37,21 @@ def render_project_card(project, index):
             st.markdown(f"**Due:** {project.get('dueDate', '-')}")
         
         st.markdown(f"**Manager:** {project.get('created_by', '-')}")
-        if project.get("co_manager"):
+         # --- Show multiple co-managers if available ---
+        co_managers = project.get("co_managers", [])
+        if co_managers:
+            st.markdown("**Co-Managers:**")
+            for cm in co_managers:
+                cm_user = cm.get("user", "-")
+                cm_access = cm.get("access", "full")
+                if cm_access == "limited":
+                    stages = ", ".join(cm.get("stages", [])) or "No stages selected"
+                    st.markdown(f"- {cm_user} (Limited Access: {stages})")
+                else:
+                    st.markdown(f"- {cm_user} (Full Access)")
+
+        # --- Legacy single co_manager (backward compatibility) ---
+        elif project.get("co_manager"):
             cm = project["co_manager"]
             cm_user = cm.get("user", "-")
             cm_access = cm.get("access", "full")

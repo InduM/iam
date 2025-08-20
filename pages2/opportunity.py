@@ -183,7 +183,7 @@ class ClientsFrontend:
     
     def show_create_form(self):
         """Display the create client form"""
-        st.title("➕ Create Client")
+        st.title("➕ Create Opportunity")
         
         # Back button
         if st.button("← Back"):
@@ -197,7 +197,7 @@ class ClientsFrontend:
         form_data = self._render_client_form()
 
         # Submit button
-        if st.button("✅ Create Client"):
+        if st.button("✅ Create Opportunity"):
             self._handle_create_client(form_data)
     
     def show_edit_form(self):
