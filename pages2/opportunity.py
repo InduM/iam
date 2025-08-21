@@ -14,7 +14,7 @@ from utils.utils_opportunity import (
     navigate_to_view
 )
 
-class ClientsFrontend:
+class OpportunityFrontend:
     def __init__(self):
         self.backend = OpportunityBackend()
         initialize_session_state()
@@ -40,25 +40,25 @@ class ClientsFrontend:
                 navigate_to_view("create")
         with col2:
             if st.button("🔄 Refresh"):
-                st.session_state.refresh_clients = True
+                st.session_state.refresh_opportunities = True
                 st.rerun()
         with col3:
             if st.button("📤 Export"):
-                self._handle_export_clients()
+                self._handle_export_opportunities()
 
         # Search Filter
         search_query = st.text_input("🔍 Search", placeholder="Name, Email, Company, SPOC, Phone or Description")
 
         # Load and filter clients
-        clients = self.backend.load_clients()
+        clients = self.backend.load_opportunities()
         filtered_clients = filter_clients_by_search(clients, search_query)
 
         # Display clients
-        for client in filtered_clients:
-            self._render_client_card(client)
+        for opportunity in filtered_clients:
+            self._render_opportunity_card(opportunity)
     
-    def _render_client_card(self, client):
-        """Render individual client card"""
+    def _render_opportunity_card(self, client):
+        """Render individual opportunity card"""
         cid = client["_id"]
         client_name = client.get('client_name', 'Unnamed')
         
@@ -70,7 +70,7 @@ class ClientsFrontend:
         display_name = get_client_display_name(client)
         with st.expander(f"{display_name}{project_info}"):
             self._render_client_details(client, project_count)
-            self._render_client_actions(client, cid, project_count)
+            self._render_opportunity_actions(client, cid, project_count)
     
     def _render_client_details(self, client, project_count):
         """Render client details within the card"""
@@ -108,7 +108,7 @@ class ClientsFrontend:
                 help=tooltip_text
             )
 
-    def _render_client_actions(self, client, cid, project_count):
+    def _render_opportunity_actions(self, client, cid, project_count):
         """Render action buttons for client card"""
         col1, col2, col3 = st.columns(3)
         
@@ -158,11 +158,11 @@ class ClientsFrontend:
         col_yes, col_no = st.columns(2)
         if col_yes.button("✅ Yes, Delete", key=f"yes_{cid}"):
             if self.backend.delete_client(cid):
-                st.success("Client deleted successfully!")
+                st.success("Opportunity deleted successfully!")
                 st.session_state.confirm_delete_client[confirm_key] = False
                 st.rerun()
             else:
-                st.error("Failed to delete client. Please try again.")
+                st.error("Failed to delete Opportunity. Please try again.")
         
         if col_no.button("❌ Cancel", key=f"no_{cid}"):
             st.session_state.confirm_delete_client[confirm_key] = False
@@ -171,14 +171,14 @@ class ClientsFrontend:
     def _render_delete_confirmation(self, cid, project_count, confirm_key):
         """Render delete confirmation dialog"""
         if project_count > 0:
-            st.error(f"⚠️ Cannot delete client! This client has {project_count} associated project(s).")
+            st.error(f"⚠️ Cannot delete Opportunity! This Opportunity has {project_count} associated project(s).")
             st.info("Please delete or reassign all associated projects before deleting this client.")
             
             # Only show cancel button when there are projects
             self._render_cancel_action(cid, confirm_key)
         else:
             # Only show Yes/No buttons when there are no projects
-            st.warning("Are you sure you want to delete this client?")
+            st.warning("Are you sure you want to delete this Opportunity?")
             self._render_confirmation_actions(cid, confirm_key)
     
     def show_create_form(self):
@@ -264,7 +264,7 @@ class ClientsFrontend:
         )
         
         # Created By and Sharing Section
-        st.subheader("👥 Access Control")
+        st.subheader("Access Control")
         current_user = st.session_state.get("username", "unknown")
         is_admin = st.session_state.get("user_role", "") == "admin"
         
@@ -575,7 +575,7 @@ class ClientsFrontend:
         
         return False
     
-    def _handle_export_clients(self):
+    def _handle_export_opportunities(self):
         """Handle client data export"""
         try:
             # Load all clients
@@ -821,11 +821,12 @@ class ClientsFrontend:
         elif st.session_state.client_view == "create":
             self.show_create_form()
         elif st.session_state.client_view == "edit":
+
             self.show_edit_form()
         elif st.session_state.client_view == "opportunity_to_client":
             self.show_opportunity_to_client_form()
 
 def run():
     """Entry point function to maintain compatibility"""
-    frontend = ClientsFrontend()
+    frontend = OpportunityFrontend()
     frontend.run()

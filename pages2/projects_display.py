@@ -213,7 +213,7 @@ def render_project_card(project, index):
             st.markdown(f"**Due:** {project.get('dueDate', '-')}")
         
         st.markdown(f"**Manager:** {project.get('created_by', '-')}")
-        st.markdown(f"**Team:** {', '.join(_compute_team(project)) or '-'}")
+        st.markdown(f"**Team:** {', '.join(get_project_team(project)) or '-'}")
          # --- Show multiple co-managers if available ---
         co_managers = project.get("co_managers", [])
         if co_managers:
