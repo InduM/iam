@@ -17,7 +17,7 @@ from .project_logic import (
     handle_save_project,
     handle_level_change,
 )
-
+from .project_helpers import get_project_team
 def run():
     initialize_session_state()
     _initialize_services()
@@ -58,8 +58,6 @@ def run():
     elif st.session_state.view == "edit":
         show_edit_form()
 
-
-
 def show_dashboard():
     st.query_params["_"] = str(int(time.time() // 60))
     role = st.session_state.get("role", "")
@@ -86,7 +84,7 @@ def show_dashboard():
     with col4:
         view_mode = st.segmented_control(
             options=["Cards", "Table"],
-            default="Cards",
+            default="Table",
             key="projects_view_mode",
             label="View Mode",                # 🔑 hides label
             label_visibility="collapsed"        # 🔑 hides it but keeps vertical alignment
@@ -145,12 +143,15 @@ def show_dashboard():
         # Flatten co-managers for readability
         if "co_managers" in df.columns:
             df["co_managers"] = df["co_managers"].apply(
-                lambda cms: ", ".join([f"{cm.get('user')} ({cm.get('access','full')})" for cm in cms]) if cms else ""
+               lambda cms: ", ".join(
+                    [f"{cm.get('user','?')} ({cm.get('access','full')})" for cm in cms]
+                ) if isinstance(cms, (list, tuple)) else ""
             )
 
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Projects")
+        
         st.download_button(
             label="⬇ Download Excel file",
             data=output.getvalue(),

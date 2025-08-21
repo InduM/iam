@@ -375,3 +375,31 @@ def handle_realtime_assignment_change(project_name, stage_name, new_assignment_d
     except Exception as e:
         st.error(f"❌ Error handling real-time assignment change: {str(e)}")
         return False
+
+def get_project_team(project):
+    team = set()
+
+    # 1. Stage-level members
+    stage_assignments = project.get("stage_assignments", {})
+    for stage in stage_assignments.values():
+        members = stage.get("members", [])
+        if isinstance(members, list):
+            team.update(members)
+
+        # 2. Substage assignees
+        for ss in stage.get("substages", []):
+            assignees = ss.get("assignees", [])
+            if isinstance(assignees, list):
+                team.update(assignees)
+
+    # 3. Co-managers
+    for cm in project.get("co_managers", []):
+        user = cm.get("user")
+        if user:
+            team.add(user)
+
+    # 4. Project creator
+    if project.get("created_by"):
+        team.add(project["created_by"])
+
+    return sorted(team)

@@ -17,6 +17,7 @@ from .project_logic import (
     _handle_project_deletion,
 )
 from .project_substage_manager import render_level_checkboxes_with_substages
+from .project_helpers import get_project_team
 # Main Functions
 
 import pandas as pd
@@ -72,6 +73,7 @@ def render_projects_table(projects):
             "Current Level": current_level_name,
             "Manager": p.get("created_by", ""),
             "Co-Managers": cm_text,
+            "Team": ", ".join(get_project_team(p)), 
             "Overdue Stages": ", ".join([o["stage_name"] for o in overdue]) if overdue else "",
             "EditAction": "",
             "DeleteAction": "",
@@ -211,6 +213,7 @@ def render_project_card(project, index):
             st.markdown(f"**Due:** {project.get('dueDate', '-')}")
         
         st.markdown(f"**Manager:** {project.get('created_by', '-')}")
+        st.markdown(f"**Team:** {', '.join(_compute_team(project)) or '-'}")
          # --- Show multiple co-managers if available ---
         co_managers = project.get("co_managers", [])
         if co_managers:
@@ -294,9 +297,7 @@ def render_project_card(project, index):
                     return
             
             handle_level_change(proj,proj_id, new_index, stage_assignments,"dashboard")
-        
-    
-        
+            
         # Auto-advance and auto-uncheck messages
         for i in range(len(levels)):
             auto_advance_key = f"auto_advance_success_{pid}_{i}"
@@ -364,3 +365,4 @@ def _render_project_action_buttons(project, pid):
                 st.rerun()
     else:
         col2.caption("🔒 No delete permission")
+
