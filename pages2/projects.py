@@ -1,336 +1,630 @@
 import streamlit as st
+import io
 import time
-from datetime import datetime, date , timedelta
-from typing import List
-import yagmail
-from pymongo import MongoClient
-from bson.objectid import ObjectId
-from PIL import Image
-
+import pandas as pd
+from datetime import date
+from backend.projects_backend import *
+from utils.utils_project_core import *
+from utils.utils_project_substage import *
+from utils.utils_project_user_sync import _initialize_services
+from utils.utils_project_form import ( initialize_create_form_state,render_custom_levels_editor)
+from .projects_state_management import (_render_back_button,_render_edit_header_with_refresh,_initialize_edit_mode_state)
+from .project_substage_manager import render_progress_section
+from .projects_display import (
+    render_project_card, render_level_checkboxes_with_substages,render_projects_table)
+from .project_logic import (
+    _handle_create_project,
+    handle_save_project,
+    handle_level_change,
+)
+from .project_helpers import get_project_team
 def run():
-    # ───── MongoDB Connection ─────
-    @st.cache_resource
-    def init_connection():
-        return MongoClient(st.secrets["MONGO_URI"])
+    initialize_session_state()
+    _initialize_services()
+    if "last_view" not in st.session_state:
+        st.session_state.last_view = None
 
-    client = init_connection()
-    db = client["user_db"]
-    projects_collection = db["projects"]
-    clients_collection = db["clients"]
-
-    def get_all_clients():
-        return [c["name"] for c in clients_collection.find({}, {"name": 1}) if "name" in c]
-
-
-    # ───── Database Operations ─────
-    def load_projects_from_db():
-        try:
-            role = st.session_state.get("role", "")
-            username = st.session_state.get("username", "")
-            
-            if role == "manager":
-                query = {"created_by": username}
-            else:
-                query = {}  # Admins or others can see all
-            
-            projects = list(projects_collection.find(query))
-            for project in projects:
-                project["id"] = str(project["_id"])  # Convert ObjectId for Streamlit
-                # Ensure all projects have required fields with defaults
-                if "levels" not in project:
-                    project["levels"] = ["Initial", "Invoice", "Payment"]
-                if "level" not in project:
-                    project["level"] = -1
-                if "timestamps" not in project:
-                    project["timestamps"] = {}
-                if "team" not in project:
-                    project["team"] = []
-            return projects
-        except Exception as e:
-            st.error(f"Error loading projects: {e}")
-            return []
-
-
-    def save_project_to_db(project_data):
-        """Save a new project to MongoDB"""
-        try:
-            # Remove the 'id' field if it exists (MongoDB will generate _id)
-            if "id" in project_data:
-                del project_data["id"]
-            
-            result = projects_collection.insert_one(project_data)
-            return str(result.inserted_id)
-        except Exception as e:
-            st.error(f"Error saving project: {e}")
-            return None
-
-    def update_project_in_db(project_id, project_data):
-        """Update an existing project in MongoDB"""
-        try:
-            # Convert string ID back to ObjectId for MongoDB query
-            object_id = ObjectId(project_id)
-            
-            # Remove the 'id' field from update data
-            update_data = project_data.copy()
-            if "id" in update_data:
-                del update_data["id"]
-            
-            result = projects_collection.update_one(
-                {"_id": object_id}, 
-                {"$set": update_data}
-            )
-            return result.modified_count > 0
-        except Exception as e:
-            st.error(f"Error updating project: {e}")
-            return False
-
-    def delete_project_from_db(project_id):
-        """Delete a project from MongoDB"""
-        try:
-            object_id = ObjectId(project_id)
-            result = projects_collection.delete_one({"_id": object_id})
-            return result.deleted_count > 0
-        except Exception as e:
-            st.error(f"Error deleting project: {e}")
-            return False
-
-    def update_project_level_in_db(project_id, new_level, timestamp):
-        """Update project level and timestamp in MongoDB"""
-        try:
-            object_id = ObjectId(project_id)
-            result = projects_collection.update_one(
-                {"_id": object_id},
-                {
-                    "$set": {
-                        "level": new_level,
-                        f"timestamps.{new_level}": timestamp
-                    }
-                }
-            )
-            return result.modified_count > 0
-        except Exception as e:
-            st.error(f"Error updating project level: {e}")
-            return False
-
-    def move_project_to_completed(project_name, team_members):
-        """Move project from 'projects' to 'completed_projects' for all team members"""
-        try:
-            # Get all users who have this project in their projects list
-            users_to_update = list(users_collection.find({"project": project_name}))
-            
-            for user in users_to_update:
-                # Initialize completed_projects field if it doesn't exist
-                if "completed_projects" not in user:
-                    users_collection.update_one(
-                        {"_id": user["_id"]},
-                        {"$set": {"completed_projects": []}}
-                    )
-                
-                # Move project from projects to completed_projects
-                users_collection.update_one(
-                    {"_id": user["_id"]},
-                    {
-                        "$pull": {"project": project_name},
-                        "$addToSet": {"completed_projects": project_name}
-                    }
-                )
-            
-            return len(users_to_update)
-        except Exception as e:
-            st.error(f"Error moving project to completed: {e}")
-            return 0
-
-    # ───── Email Sender ─────
-    def send_invoice_email(to_email, project_name):
-        try:
-            yag = yagmail.SMTP(user=st.secrets["email"]["from"], password=st.secrets["email"]["password"])
-            subject = f"Invoice Stage Reminder – {project_name}"
-            body = f"Reminder: Project '{project_name}' has reached Invoice stage."
-            yag.send(to=to_email, subject=subject, contents=body)
-            return True
-        except Exception as e:
-            st.error(f"Failed to send email: {e}")
-            return False
-
-    # ───── Templates ─────
-    TEMPLATES = {
-        "Software Project": ["Planning", "Design", "Development", "Testing", "Deployment"],
-        "Research Project": ["Hypothesis", "Data Collection", "Analysis", "Publication"],
-        "Event Planning": ["Ideation", "Budgeting", "Vendor Selection", "Promotion", "Execution"],
-        "v-shesh":["Initial Contact","Scope","Proposal","Accept Quote","Onboarding","Service"]
-    }
-
-    users_collection = db["users"]
-
-    @st.cache_data
-    def get_team_members(role):
-        if role == "manager":
-            return [u["name"] for u in users_collection.find({"role": "user"})if "name" in u]
-        else:
-            return [u["name"] for u in users_collection.find() if "name" in u]
-
-    TEAM_MEMBERS = get_team_members(st.session_state.get("role", ""))
-
-
-    # ───── Session State ─────
-    for key, default in {
-        "view": "dashboard",
-        "selected_template": "",
-        "custom_levels": [],
-        "level_index": -1,
-        "level_timestamps": {},
-        "edit_project_id": None,
-        "confirm_delete": {},
-        "create_pressed": False,
-        "edit_pressed": False
-    }.items():
-        if key not in st.session_state:
-            st.session_state[key] = default
-
-    # Load projects from database on first run or when explicitly refreshed
     if "projects" not in st.session_state or st.session_state.get("refresh_projects", False):
-        st.session_state.projects = load_projects_from_db()
+        all_projects = load_projects_from_db()
+        username = st.session_state.get("username", "")
+        role = st.session_state.get("role", "")
+
+        if role == "user":
+            filtered_projects = []
+            for proj in all_projects:
+                created_by = proj.get("created_by", "")
+                co_managers = proj.get("co_managers", [])
+
+                # Check if user is creator
+                is_creator = (created_by == username)
+
+                # Check if user is co-manager
+                is_co_manager = any(cm.get("user") == username for cm in co_managers)
+
+                if is_creator or is_co_manager:
+                    filtered_projects.append(proj)
+
+            st.session_state.projects = filtered_projects
+        else:
+            # Managers/Admins → see everything
+            st.session_state.projects = all_projects
+
         st.session_state.refresh_projects = False
 
-    # ───── Helpers ─────
-    def format_level(i, levels: List[str]):
-        try:
-            i = int(i)
-            if i >= 0 and i < len(levels):
-                return f"Level {i+1} – {str(levels[i])}"
-            else:
-                return f"Level {i+1}"
-        except Exception:
-            return f"Level {i+1}"
+    if st.session_state.view == "dashboard":
+        show_dashboard()
+    elif st.session_state.view == "create":
+        show_create_form()
+    elif st.session_state.view == "edit":
+        show_edit_form()
 
-    def render_level_checkboxes(prefix, project_id, current_level, timestamps, levels, on_change_fn=None, editable=True):
-        for i, label in enumerate(levels):
-            key = f"{prefix}_{project_id}_level_{i}"
-            checked = i <= current_level and current_level >= 0
-            disabled = not editable or i > current_level + 1 or (i < current_level and i != current_level)
-            display_label = f"{label}"
-            if checked and str(i) in timestamps:
-                display_label += f" ⏱️ {timestamps[str(i)]}"
+def show_dashboard():
+    st.query_params["_"] = str(int(time.time() // 60))
+    role = st.session_state.get("role", "")
+    username = st.session_state.get("username", "")
 
-            def callback(i=i, cl=current_level):
-                if i == cl + 1:
-                    on_change_fn(i)
-                elif i == cl:
-                    on_change_fn(i - 1)
+    # --- Header ---
+    if role == "user":
+        st.caption(f"Showing projects you created or co-manage (logged in as **{username}**)")
+    else:
+        st.caption(f"Showing all projects (logged in as **{username}**, role: {role})")
 
-            st.checkbox(
-                label=display_label,
-                value=checked,
-                key=key,
-                disabled=disabled,
-                on_change=callback if editable and on_change_fn else None
-            )
+        # --- Top buttons ---
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+    with col1:
+        if st.button("➕ New Project", use_container_width=True):
+            st.session_state.view = "create"
+            st.rerun()
+    with col2:
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.session_state.refresh_projects = True
+            st.rerun()
+    with col3:
+        export_trigger = st.button("📤 Export to Excel", use_container_width=True)
+    with col4:
+        view_mode = st.segmented_control(
+            options=["Cards", "Table"],
+            default="Table",
+            key="projects_view_mode",
+            label="View Mode",                # 🔑 hides label
+            label_visibility="collapsed"        # 🔑 hides it but keeps vertical alignment
+        )
 
-    # ───── User Profile Update Functions ─────
-    def update_project_name_in_user_profiles(old_name, new_name):
-        """Update project name in all user profiles when a project name is changed"""
-        try:
-            # Update all users who have the old project name in their project list
-            result = users_collection.update_many(
-                {"project": old_name},
-                {"$set": {"project.$": new_name}}
-            )
-            return result.modified_count
-        except Exception as e:
-            st.error(f"Error updating project name in user profiles: {e}")
-            return 0
-
-    def remove_project_from_all_users(project_name):
-        """Remove a project from all user profiles"""
-        try:
-            users_collection.update_many(
-                {"project": project_name},
-                {"$pull": {"project": project_name}}
-            )
-        except Exception as e:
-            st.error(f"Error removing project from user profiles: {e}")
-
-    def update_users_with_project(team_list, project_name):
-        """Add project to user profiles for team members"""
-        try:
-            for user in team_list:
-                # Step 1: Ensure the project field is a list if it exists as a string
-                user_doc = users_collection.find_one({"name": user})
-                if user_doc:
-                    if "project" in user_doc and isinstance(user_doc["project"], str):
-                        users_collection.update_one(
-                            {"name": user},
-                            {"$set": {"project": [user_doc["project"]]}}
-                        )
-                    elif "project" not in user_doc:
-                        users_collection.update_one(
-                            {"name": user},
-                            {"$set": {"project": []}}
-                        )
-
-                # Step 2: Add new project without duplicates
-                users_collection.update_one(
-                    {"name": user},
-                    {"$addToSet": {"project": project_name}}
-                )
-        except Exception as e:
-            st.error(f"Error updating users with project: {e}")
-
-    def remove_project_from_users(old_team, new_team, project_name):
-        """Remove project from users who are no longer on the team"""
-        try:
-            removed_users = set(old_team) - set(new_team)
-            for user in removed_users:
-                users_collection.update_one(
-                    {"name": user},
-                    {"$pull": {"project": project_name}}
-                )
-        except Exception as e:
-            st.error(f"Error removing project from users: {e}")
-
-    # ───── Pages ─────
-    def show_dashboard():
-        st.query_params["_"]=str(int(time.time() // 60)) #Trigger rerun every 60 seconds
-
-        col1, col2 = st.columns([1, 1])
+    # --- Filter bar ---
+    with st.container():
+        st.markdown("<div class='filter-bar'>", unsafe_allow_html=True)
+        col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 2])
         with col1:
-            if st.button("➕ New Project"):
-                st.session_state.view = "create"
-                st.rerun()
+            search_query = st.text_input("🔍 Search", placeholder="Name, client, or team")
         with col2:
-            if st.button("🔄Refresh"):
-                st.session_state.refresh_projects = True
-                st.rerun()
-
-        # Responsive search + filters
-        col1, col2, col3 = st.columns([3, 2, 2])
-        with col1:
-            search_query = st.text_input("Search", placeholder="Name, client, or team")
-        with col2:
-            filter_template = st.selectbox("Template", ["All"] + list(TEMPLATES.keys()))
+            filter_template = st.selectbox("📂 Template", ["All"] + list(TEMPLATES.keys()))
         with col3:
-            all_levels = sorted(set(
-                lvl for proj in st.session_state.projects for lvl in proj.get("levels", [])
-            ))
-            filter_level = st.selectbox("Progress Level", ["All"] + all_levels)
+            filter_subtemplate = "All"
+            if filter_template == "Onwards":
+                filter_subtemplate = st.selectbox("🔄 Subtemplate", ["All", "Foundation", "Work Readiness"])
+            else:
+                st.empty()
+        with col4:
+            progress_levels = _get_template_progress_levels(filter_template, filter_subtemplate)
+            filter_level = st.selectbox("📊 Progress Level", ["All"] + progress_levels)
+        with col5:
+            filter_due = st.date_input("📅 Due Before or On", value=None)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        filter_due = st.date_input("Due Before or On", value=None)
+    # --- Apply standard filters ---
+    filtered_projects = _apply_filters(
+        st.session_state.projects,
+        search_query,
+        filter_template,
+        filter_subtemplate,
+        filter_level,
+        filter_due,
+    )
 
-        filtered_projects = st.session_state.projects
-        if search_query:
-            q = search_query.lower()
-            filtered_projects = [p for p in filtered_projects if
-                                q in p.get("name", "").lower() or
-                                q in p.get("client", "").lower() or
-                                any(q in member.lower() for member in p.get("team", []))]
+    # --- Extra role-based filter (user only) ---
+    if role == "user":
+        filter_option = st.selectbox(
+            "👤 Filter by ownership",
+            ["All", "Created by me", "I co-manage"],
+            key="project_user_filter"
+        )
+        if filter_option == "Created by me":
+            filtered_projects = [p for p in filtered_projects if p.get("created_by") == username]
+        elif filter_option == "I co-manage":
+            filtered_projects = [
+                p for p in filtered_projects
+                if any(cm.get("user") == username for cm in p.get("co_managers", []))
+            ]
 
+    # --- Export projects to Excel ---
+    if export_trigger and filtered_projects:
+        df = pd.DataFrame(filtered_projects)
+
+        # Flatten co-managers for readability
+        if "co_managers" in df.columns:
+            df["co_managers"] = df["co_managers"].apply(
+               lambda cms: ", ".join(
+                    [f"{cm.get('user','?')} ({cm.get('access','full')})" for cm in cms]
+                ) if isinstance(cms, (list, tuple)) else ""
+            )
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Projects")
+        
+        st.download_button(
+            label="⬇ Download Excel file",
+            data=output.getvalue(),
+            file_name="projects_export.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    # --- Display projects in 2-column layout ---
+    if st.session_state.get("projects_view_mode", "Cards") == "Table":
+        render_projects_table(filtered_projects)
+    else:
+        cols = st.columns(2)
+        for i, project in enumerate(filtered_projects):
+            with cols[i % 2]:
+                st.markdown("<div class='project-card'>", unsafe_allow_html=True)
+                render_project_card(project, i)
+                st.markdown("</div>", unsafe_allow_html=True)
+                
+def _get_template_progress_levels(filter_template, filter_subtemplate="All"):
+    """Get progress levels based on selected template and subtemplate"""
+    if filter_template == "All":
+        # Show all unique levels from all projects
+        all_levels = sorted(set(lvl for proj in st.session_state.projects for lvl in proj.get("levels", [])))
+        return all_levels
+    elif filter_template == "Onwards":
+        # For Onwards template, levels don't include Invoice/Payment
+        if filter_template in TEMPLATES:
+            base_levels = TEMPLATES[filter_template].copy()
+            # Remove Invoice and Payment if they exist
+            for stage_to_remove in ["Invoice", "Payment"]:
+                if stage_to_remove in base_levels:
+                    base_levels.remove(stage_to_remove)
+            return base_levels
+        else:
+            return []
+    elif filter_template in TEMPLATES:
+        # For other templates, include all standard levels
+        template_levels = TEMPLATES[filter_template].copy()
+        # Remove Invoice and Payment first, then add them back at the end
+        for required in ["Invoice", "Payment"]:
+            if required in template_levels:
+                template_levels.remove(required)
+        return template_levels + ["Invoice", "Payment"]
+    else:
+        # Fallback: get levels from projects matching this template
+        matching_projects = [p for p in st.session_state.projects if p.get("template") == filter_template]
+        if matching_projects:
+            all_levels = sorted(set(lvl for proj in matching_projects for lvl in proj.get("levels", [])))
+            return all_levels
+        return []
+
+def show_create_form():
+    if not st.session_state.get("create_initialized", False):
+        initialize_create_form_state()
+        st.session_state.create_initialized = True
+    _render_back_button()
+    
+    # Template selection with current value
+    template_options = ["Custom Template"] + list(TEMPLATES.keys())
+    current_template = st.session_state.get("selected_template", "")
+    
+    # Find current index for template
+    if current_template and current_template in TEMPLATES:
+        current_template_index = template_options.index(current_template)
+    else:
+        current_template_index = 0
+    
+    selected = st.selectbox(
+        "📂 Select Template (optional)", 
+        template_options, 
+        index=current_template_index,
+        key="template_selector"
+    )
+    
+    # Handle template selection change
+    if selected != st.session_state.get("selected_template", ""):
+        if selected != "Custom Template":
+            st.session_state.selected_template = selected
+            st.session_state.stage_assignments = {}
+        else:
+            st.session_state.selected_template = ""
+            st.session_state.stage_assignments = {}
+        # Reset subtemplate when template changes
+        st.session_state.selected_subtemplate = ""
+
+    # Subtemplate selection for "Onwards" template
+    selected_subtemplate = ""
+    if st.session_state.get("selected_template") == "Onwards":
+        subtemplate_options = ["Foundation", "Work Readiness"]
+        current_subtemplate = st.session_state.get("selected_subtemplate", "")
+        
+        # Find current index for subtemplate
+        if current_subtemplate and current_subtemplate in subtemplate_options:
+            current_subtemplate_index = subtemplate_options.index(current_subtemplate)
+        else:
+            current_subtemplate_index = 0
+        
+        selected_subtemplate = st.selectbox(
+            "🔄 Select Subtemplate", 
+            subtemplate_options, 
+            index=current_subtemplate_index,
+            key="subtemplate_selector"
+        )
+        
+        # Update session state only if changed
+        if selected_subtemplate != st.session_state.get("selected_subtemplate", ""):
+            st.session_state.selected_subtemplate = selected_subtemplate
+
+    st.markdown("<div class='section-header'>Project Details</div>", unsafe_allow_html=True)
+    name = st.text_input("📝 Project Name", value="")
+    
+    # Only show client field if template is NOT "Onwards"
+    client = ""
+    if st.session_state.get("selected_template") != "Onwards":
+        clients = get_all_clients()
+        if not clients:
+            st.warning("⚠ No clients found in the database.")
+            client_options = [""]
+        else:
+            client_options = [""] + clients
+        
+        client = st.selectbox(
+            "👤 Client", 
+            options=client_options, 
+            index=0,
+            key="client_selector"
+        )
+    
+    description = st.text_area("🗒 Project Description", value="")
+    start = st.date_input("📅 Start Date", value=date.today())
+    due = st.date_input("📅 Due Date", value=date.today())
+
+    # Handle template levels
+    if st.session_state.selected_template:
+        if st.session_state.selected_template == "Onwards":
+            st.markdown(f"Using template: **{st.session_state.selected_template}** - **{selected_subtemplate}**")
+            # Get base template levels and remove Invoice/Payment
+            levels_from_template = TEMPLATES[st.session_state.selected_template].copy()
+            # Remove Invoice and Payment stages for Onwards template
+            for stage_to_remove in ["Invoice", "Payment"]:
+                if stage_to_remove in levels_from_template:
+                    levels_from_template.remove(stage_to_remove)
+            st.session_state.custom_levels = levels_from_template
+        else:
+            st.markdown(f"Using template: **{st.session_state.selected_template}**")
+            levels_from_template = TEMPLATES[st.session_state.selected_template].copy()
+            # For other templates, remove Invoice/Payment and add them back at the end
+            for required in ["Invoice", "Payment"]:
+                if required in levels_from_template:
+                    levels_from_template.remove(required)
+            st.session_state.custom_levels = levels_from_template + ["Invoice", "Payment"]
+    else:
+        render_custom_levels_editor()
+
+    team_members = get_team_members_username(st.session_state.get("role", ""))
+    st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
+    stage_assignments = render_substage_assignments_editor(st.session_state.custom_levels, team_members, st.session_state.get("stage_assignments", {}))
+    st.session_state.stage_assignments = stage_assignments
+
+    if stage_assignments:
+        assignment_issues = validate_stage_assignments(stage_assignments, st.session_state.custom_levels)
+        if assignment_issues:
+            for issue in assignment_issues:
+                st.warning(f"⚠️ {issue}")
+
+    render_progress_section("create")
+
+    # --- NEW: Co-Manager in create form ---
+    st.subheader("Co-Manager")
+    co_manager = None
+    if st.checkbox("➕ Add Co-Manager", key="add_co_manager_create"):
+        team_members = get_team_members_username(st.session_state.get("role", ""))
+        cm_user = st.selectbox("Select Co-Manager", options=team_members, key="cm_user_create")
+        cm_access = st.radio("Access Type", ["Full Project Access", "Stage-Limited Access"], key="cm_access_create")
+        if cm_access == "Stage-Limited Access":
+            cm_stages = st.multiselect("Select allowed stages", st.session_state.custom_levels, key="cm_stages_create")
+            co_manager = {"user": cm_user, "access": "limited", "stages": cm_stages}
+        else:
+            co_manager = {"user": cm_user, "access": "full"}
+
+
+    if st.button("✅ Create Project", use_container_width=True):
+        _handle_create_project(
+        name,
+        client,
+        description,
+        start,
+        due,
+        st.session_state.get("selected_template", ""),   # template
+        st.session_state.get("selected_subtemplate", ""),# subtemplate
+        stage_assignments,                               # stage_assignments
+        st.session_state.get("username", "admin"),       # created_by
+        [co_manager] if co_manager else []               # co_managers (list)
+    )
+
+
+def show_edit_form():
+    from backend.projects_backend import update_project_field
+    from backend.log_backend import ProjectLogManager
+    from bson import ObjectId
+    from datetime import datetime
+
+    pid = st.session_state.edit_project_id
+    current_project = next((p for p in st.session_state.projects if p["id"] == pid), None)
+    project_name = current_project.get("name", "") if current_project else ""
+    _render_edit_header_with_refresh(project_name, pid)
+
+    if st.session_state.get(f"edit_refresh_success_{pid}", False):
+        st.success("✅ Project data refreshed from database!")
+        del st.session_state[f"edit_refresh_success_{pid}"]
+    if not st.session_state.get(f"edit_initialized_{pid}", False):
+        _initialize_edit_mode_state(pid)
+        st.session_state[f"edit_initialized_{pid}"] = True
+        st.rerun()
+
+    if not current_project:
+        st.error("Project not found.")
+        return
+
+    # --- Permission check ---
+    role = st.session_state.get("role", "")
+    username = st.session_state.get("username", "")
+    created_by = current_project.get("created_by", "")
+    co_managers = current_project.get("co_managers", [])
+    is_creator = (created_by == username)
+    user_cm = next((cm for cm in co_managers if cm.get("user") == username), None)
+    is_co_manager = bool(user_cm)
+    if role == "user" and not (is_creator or is_co_manager):
+        st.error("🚫 You do not have permission to edit this project.")
+        st.session_state.view = "dashboard"
+        st.rerun()
+        return
+    # --- End permission check ---
+
+    fresh_project = get_project_by_name(project_name)
+    if not fresh_project:
+        st.error("Project not found in database.")
+        return
+    project = ensure_project_defaults(fresh_project)
+    original_name = project.get("name", "")
+
+    st.markdown("<div class='section-header'>Project Details</div>", unsafe_allow_html=True)
+    name = st.text_input("📝 Project Name", value=project.get("name", ""))
+
+    # Template and subtemplate info
+    project_template = project.get("template", "")
+    project_subtemplate = project.get("subtemplate", "")
+    if project_template:
+        if project_template == "Onwards" and project_subtemplate:
+            st.info(f"📂 Template: **{project_template}** - **{project_subtemplate}**")
+        else:
+            st.info(f"📂 Template: **{project_template}**")
+
+    # Client field
+    client = ""
+    if project_template != "Onwards":
+        clients = get_all_clients()
+        if not clients:
+            st.warning("⚠ No clients found in the database.")
+        current_client = project.get("client", "")
+        if current_client in clients:
+            client = st.selectbox("👤 Client", options=clients, index=clients.index(current_client))
+        else:
+            st.warning(f"⚠ Current client '{current_client}' not found in client list. Please select a new client.")
+            client = st.selectbox("👤 Client", options=clients)
+    else:
+        client = project.get("client", "")
+        if client:
+            st.info(f"👤 Client field hidden for Onwards template. Current client: {client}")
+
+    description = st.text_area("🗒 Project Description", value=project.get("description", ""))
+    start = st.date_input("📅 Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
+    due = st.date_input("📅 Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
+
+    # --- Multi Co-Managers section ---
+    st.subheader("Co-Managers")
+    existing_cms = project.get("co_managers", [])
+    if not existing_cms:
+        st.caption("No co-managers assigned yet.")
+
+    updated_cms = []
+    team_members = get_team_members_username(st.session_state.get("role", ""))
+
+    log_manager = ProjectLogManager()
+    actor = st.session_state.get("username", "?")
+
+    for idx, cm in enumerate(existing_cms):
+        st.markdown(f"**Co-Manager {idx+1}:**")
+
+        cm_user = st.selectbox(
+            "User", options=team_members,
+            index=team_members.index(cm.get("user")) if cm.get("user") in team_members else 0,
+            key=f"cm_user_{pid}_{idx}"
+        )
+
+        cm_access = st.radio(
+            "Access Type", ["Full Project Access", "Stage-Limited Access"],
+            index=0 if cm.get("access") == "full" else 1,
+            key=f"cm_access_{pid}_{idx}"
+        )
+
+        if cm_access == "Stage-Limited Access":
+            cm_stages = st.multiselect(
+                "Allowed Stages", project.get("levels", []),
+                default=cm.get("stages", []),
+                key=f"cm_stages_{pid}_{idx}"
+            )
+            updated_cms.append({"user": cm_user, "access": "limited", "stages": cm_stages})
+        else:
+            updated_cms.append({"user": cm_user, "access": "full"})
+
+        # Remove button
+        if st.button(f"❌ Remove {cm_user}", key=f"remove_cm_{pid}_{idx}"):
+            project["co_managers"].pop(idx)
+            update_project_field(pid, {"co_managers": project["co_managers"]})
+
+            log_manager.create_log_entry({
+                "project_id": ObjectId(pid),
+                "project": project.get("name", ""),
+                "event": "co_manager_removed",
+                "message": f"Removed {cm_user}",
+                "performed_by": actor,
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            })
+
+            st.success(f"Removed {cm_user}.")
+            st.rerun()
+
+    # Add new co-manager
+    if st.button("➕ Add Co-Manager", key=f"add_co_manager_{pid}"):
+        st.session_state[f"show_add_cm_{pid}"] = True
+
+    if st.session_state.get(f"show_add_cm_{pid}", False):
+        cm_user = st.selectbox("Select Co-Manager", options=team_members, key=f"cm_user_add_{pid}")
+        cm_access = st.radio("Access Type", ["Full Project Access", "Stage-Limited Access"], key=f"cm_access_add_{pid}")
+        if cm_access == "Stage-Limited Access":
+            cm_stages = st.multiselect("Select allowed stages", project.get("levels", []), key=f"cm_stages_add_{pid}")
+            new_cm = {"user": cm_user, "access": "limited", "stages": cm_stages}
+        else:
+            new_cm = {"user": cm_user, "access": "full"}
+
+        if st.button("✅ Confirm Add", key=f"confirm_add_cm_{pid}"):
+            project.setdefault("co_managers", []).append(new_cm)
+            update_project_field(pid, {"co_managers": project["co_managers"]})
+
+            log_manager.create_log_entry({
+                "project_id": ObjectId(pid),
+                "project": project.get("name", ""),
+                "event": "co_manager_added",
+                "message": f"Added {cm_user} ({new_cm['access']})",
+                "performed_by": actor,
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            })
+
+            st.success(f"Added {cm_user} as co-manager.")
+            st.session_state[f"show_add_cm_{pid}"] = False
+            st.rerun()
+
+    # Replace with updated list (and persist if changed)
+    if updated_cms != existing_cms:
+        project["co_managers"] = updated_cms
+        update_project_field(pid, {"co_managers": project["co_managers"]})
+
+        # Track updates
+        old_users = {cm["user"]: cm for cm in existing_cms}
+        new_users = {cm["user"]: cm for cm in updated_cms}
+        for user, cm in new_users.items():
+            if user in old_users and cm != old_users[user]:
+                log_manager.create_log_entry({
+                    "project_id": ObjectId(pid),
+                    "project": project.get("name", ""),
+                    "event": "co_manager_updated",
+                    "message": f"Updated {user} ({cm['access']})",
+                    "performed_by": actor,
+                    "created_at": datetime.now(),
+                    "updated_at": datetime.now()
+                })
+
+    # --- Stage Assignments ---
+    st.markdown("<div class='section-header'>Stage Assignments</div>", unsafe_allow_html=True)
+    current_stage_assignments = project.get("stage_assignments", {})
+
+    # Determine allowed stages for current user
+    allowed_stages = project.get("levels", ["Initial", "Invoice", "Payment"])
+    if role == "user" and user_cm and user_cm.get("access") == "limited":
+        allowed_stages = user_cm.get("stages", [])
+        if not allowed_stages:
+            st.warning("⚠️ You have no stage permissions in this project.")
+            return
+
+    stage_assignments = render_substage_assignments_editor(
+        allowed_stages,
+        team_members,
+        {k: v for k, v in current_stage_assignments.items() if v.get("stage_name") in allowed_stages}
+    )
+
+    if stage_assignments:
+        assignment_issues = validate_stage_assignments(stage_assignments, project.get("levels", []))
+        if assignment_issues:
+            for issue in assignment_issues:
+                st.warning(f"⚠️ {issue}")
+
+    overdue_stages = get_overdue_stages(current_stage_assignments, project.get("levels", []), project.get("level", -1))
+    if overdue_stages:
+        st.error("🔴 Overdue Stages:")
+        for overdue in overdue_stages:
+            st.error(f"  • {overdue['stage_name']}: {overdue['days_overdue']} days overdue (Due: {overdue['deadline']})")
+
+    # --- Progress ---
+    st.subheader("Progress")
+
+    def on_change_edit(new_index):
+        fresh_proj = get_project_by_name(project_name)
+        fresh_assignments = fresh_proj.get("stage_assignments", {}) if fresh_proj else {}
+        handle_level_change(fresh_proj or project, pid, new_index, fresh_assignments, "edit")
+
+    render_level_checkboxes_with_substages(
+        "edit",
+        pid,
+        int(project.get("level", -1)),
+        project.get("timestamps", {}),
+        allowed_stages,  # 🔒 restricted here
+        on_change_edit,
+        editable=True,
+        stage_assignments=current_stage_assignments,
+        project=project
+    )
+
+    # --- Save project general fields ---
+    if st.button("💾 Save", use_container_width=True):
+        handle_save_project(pid, project, name, client, description, start, due, original_name, stage_assignments)
+
+
+
+def _apply_filters(projects, search_query, filter_template, filter_subtemplate, filter_level, filter_due):
+    """Apply filters to project list including subtemplate filter with template-aware level filtering"""
+    filtered_projects = projects
+    
+    if search_query:
+        q = search_query.lower()
+        filtered_projects = [p for p in filtered_projects if
+                            q in p.get("name", "").lower() or
+                            q in p.get("client", "").lower() or
+                            any(q in member.lower() for member in p.get("team", []))]
+    
+    if filter_template != "All":
+        filtered_projects = [p for p in filtered_projects if p.get("template") == filter_template]
+    
+    # Apply subtemplate filter for Onwards projects
+    if filter_template == "Onwards" and filter_subtemplate != "All":
+        filtered_projects = [p for p in filtered_projects if p.get("subtemplate") == filter_subtemplate]
+    
+    if filter_due:
+        filtered_projects = [p for p in filtered_projects if 
+                           p.get("dueDate") and date.fromisoformat(p["dueDate"]) <= filter_due]
+    
+    # Enhanced level filtering that works with template-specific levels
+    if filter_level != "All":
         if filter_template != "All":
-            filtered_projects = [p for p in filtered_projects if p.get("template") == filter_template]
-
-        if filter_due:
-            filtered_projects = [p for p in filtered_projects if p.get("dueDate") and date.fromisoformat(p["dueDate"]) <= filter_due]
-
-        if filter_level != "All":
+            # Template-specific level filtering
+            template_levels = _get_template_progress_levels(filter_template, filter_subtemplate)
+            filtered_projects = [
+                p for p in filtered_projects
+                if p.get("level", -1) >= 0 and
+                p.get("levels") and
+                len(p["levels"]) > p.get("level", -1) and
+                p["levels"][p["level"]] == filter_level and
+                filter_level in template_levels
+            ]
+        else:
+            # General level filtering (original logic)
             filtered_projects = [
                 p for p in filtered_projects
                 if p.get("level", -1) >= 0 and
@@ -338,410 +632,7 @@ def run():
                 len(p["levels"]) > p.get("level", -1) and
                 p["levels"][p["level"]] == filter_level
             ]
+    
+    return filtered_projects
 
-        for i, p in enumerate(filtered_projects):
-            pid = p.get("id", f"auto_{i}")
-            with st.expander(f"{p.get('name', 'Unnamed')}"):
-                st.markdown(f"**Client:** {p.get('client', '-')}")
-                st.markdown(f"**Description:** {p.get('description', '-')}")
-                st.markdown(f"**Start Date:** {p.get('startDate', '-')}")
-                st.markdown(f"**Due Date:** {p.get('dueDate', '-')}")
-                st.markdown(f"**Manager/Lead:** {p.get('created_by', '-')}")
-                st.markdown(f"**Team Assigned:** {', '.join(p.get('team', [])) or '-'}")
-                levels = p.get("levels", ["Initial", "Invoice", "Payment"])  # Default levels if none exist
-                current_level = p.get("level", -1)
-                st.markdown(f"**Current Level:** {format_level(current_level, levels)}")
-                
-                # Level checkboxes with database update functionality for dashboard view
-                def on_change_dashboard(new_index, proj_id=pid, proj=p):
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    if update_project_level_in_db(proj_id, new_index, timestamp):
-                        # Update local state
-                        old_level = proj["level"]
-                        proj["level"] = new_index
-                        if "timestamps" not in proj:
-                            proj["timestamps"] = {}
-                        proj["timestamps"][str(new_index)] = timestamp
-                        
-                        # Check if project reached Payment stage
-                        project_levels = proj.get("levels", [])
-                        if (new_index >= 0 and new_index < len(project_levels) and 
-                            project_levels[new_index] == "Payment"):
-                            # Move project to completed for all team members
-                            project_name = proj.get("name", "")
-                            team_members = proj.get("team", [])
-                            moved_count = move_project_to_completed(project_name, team_members)
-                            if moved_count > 0:
-                                st.session_state[f"project_completed_message_{proj_id}"] = f"Project moved to completed for {moved_count} team member(s)!"
-                        
-                        # Store success message to show after rerun
-                        st.session_state[f"level_update_success_{proj_id}"] = True
-                
-                # Check for success message from previous update
-                if st.session_state.get(f"level_update_success_{pid}", False):
-                    st.success("Project level updated!")
-                    st.session_state[f"level_update_success_{pid}"] = False
-                
-                # Check for project completion message
-                if st.session_state.get(f"project_completed_message_{pid}", False):
-                    st.success(st.session_state[f"project_completed_message_{pid}"])
-                    st.session_state[f"project_completed_message_{pid}"] = False
-                
-                render_level_checkboxes("view", pid, int(p.get("level", -1)), p.get("timestamps", {}), levels, on_change_dashboard, editable=True)
-                
-                # --- Email Reminder ---
-                project_name = p.get("name", "Unnamed")
-                lead_email = st.secrets.get("project_leads", {}).get("Project Alpha")
-                
-                # Safe check for Invoice and Payment levels
-                try:
-                    invoice_index = levels.index("Invoice") if "Invoice" in levels else -1
-                    payment_index = levels.index("Payment") if "Payment" in levels else -1
-                except (ValueError, AttributeError):
-                    invoice_index = -1
-                    payment_index = -1
 
-                email_key = f"last_email_sent_{pid}"
-                if email_key not in st.session_state:
-                    st.session_state[email_key] = None
-
-                if (0 <= invoice_index <= current_level) and (payment_index > current_level) and lead_email:
-                    now = datetime.now()
-                    last_sent = st.session_state[email_key]
-                    if not last_sent:
-                        if send_invoice_email(lead_email, project_name):
-                            st.session_state[email_key] = now
-                    if not last_sent or now - last_sent >= timedelta(minutes=1):
-                        if send_invoice_email(lead_email, project_name):
-                            st.session_state[email_key] = now
-            
-                col1, col2 = st.columns(2)
-                if col1.button("✏ Edit", key=f"edit_{pid}"):
-                    st.session_state.edit_project_id = pid
-                    st.session_state.view = "edit"
-                    st.rerun()
-
-                confirm_key = f"confirm_delete_{pid}"
-                if not st.session_state.confirm_delete.get(confirm_key):
-                    if col2.button("🗑 Delete", key=f"del_{pid}"):
-                        st.session_state.confirm_delete[confirm_key] = True
-                        st.rerun()
-                else:
-                    st.warning("Are you sure you want to delete this project?")
-                    col_yes, col_no = st.columns(2)
-                    if col_yes.button("✅ Yes", key=f"yes_{pid}"):
-                        if delete_project_from_db(pid):
-                            st.session_state.projects = [proj for proj in st.session_state.projects if proj["id"] != pid]
-                            remove_project_from_all_users(p.get("name", "Unnamed"))  # Remove project from all user profiles
-                            st.success("Project deleted from database.")
-                            # Update client project count after deletion
-                            try:
-                                client_name = p.get("client", "")
-                                updated_count = projects_collection.count_documents({"client": client_name})
-                                clients_collection.update_one(
-                                    {"name": client_name},
-                                    {"$set": {"project_count": updated_count}}
-                                )
-                            except Exception as e:
-                                st.warning(f"Failed to update project count after deletion: {e}")
-
-                        st.session_state.confirm_delete[confirm_key] = False
-                        st.rerun()
-                    if col_no.button("❌ No", key=f"no_{pid}"):
-                        st.session_state.confirm_delete[confirm_key] = False
-                        st.rerun()
-
-    def show_create_form():
-        st.title("🛠 Create Project")
-                # Back Arrow Icon (←)
-        st.markdown(
-            """
-            <style>
-            .back-button {
-                font-size: 24px;
-                margin-bottom: 1rem;
-                display: inline-block;
-                cursor: pointer;
-                color: #007BFF;
-            }
-            .back-button:hover {
-                text-decoration: underline;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-
-        if st.button("← Back", key="back_button"):
-            st.session_state.view = "dashboard"  # or "login", or any other previous state
-            st.rerun()
-        template_options = ["Custom Template"] + list(TEMPLATES.keys())
-        selected = st.selectbox("Select Template (optional)", template_options)
-
-        if selected != "Custom Template":
-            st.session_state.selected_template = selected
-        else:
-            st.session_state.selected_template = ""
-
-        name = st.text_input("Project Name")
-        CLIENTS = get_all_clients()
-        if not CLIENTS:
-            st.warning("⚠ No clients found in the database.")
-        client = st.selectbox("Client", options=CLIENTS)
-        description = st.text_area("Project Description")
-        start = st.date_input("Start Date")
-        due = st.date_input("Due Date")
-        team = st.multiselect("Assign Team", TEAM_MEMBERS)
-
-        if st.session_state.selected_template:
-            st.markdown(f"Using template: **{st.session_state.selected_template}**")
-            levels_from_template = TEMPLATES[st.session_state.selected_template].copy()
-            for required in ["Invoice", "Payment"]:
-                if required in levels_from_template:
-                    levels_from_template.remove(required)
-            st.session_state.custom_levels = levels_from_template + ["Invoice", "Payment"]
-
-        else:
-            st.subheader("Customize Progress Levels")
-            if not st.session_state.custom_levels:
-                st.session_state.custom_levels = ["Initial"]
-
-            for required in ["Invoice", "Payment"]:
-                if required in st.session_state.custom_levels:
-                    st.session_state.custom_levels.remove(required)
-
-            editable_levels = st.session_state.custom_levels.copy()
-            for i in range(len(editable_levels)):
-                cols = st.columns([5, 1])
-                editable_levels[i] = cols[0].text_input(f"Level {i+1}", value=editable_levels[i], key=f"level_{i}")
-                if len(editable_levels) > 1 and cols[1].button("➖", key=f"remove_{i}"):
-                    editable_levels.pop(i)
-                    st.session_state.custom_levels = editable_levels
-                    st.rerun()
-
-            st.session_state.custom_levels = editable_levels
-
-            if st.button("➕ Add Level"):
-                st.session_state.custom_levels.append(f"New Level {len(st.session_state.custom_levels) + 1}")
-                st.rerun()
-
-            st.session_state.custom_levels += ["Invoice", "Payment"]
-
-        st.subheader("Progress")
-        level_index = st.session_state.get("level_index", -1)
-        level_timestamps = st.session_state.get("level_timestamps", {})
-        def on_change_create(new_index):
-            st.session_state.level_index = new_index
-            st.session_state.level_timestamps[str(new_index)] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        render_level_checkboxes("create", "new", level_index, level_timestamps, st.session_state.custom_levels, on_change_create)
-
-        if st.button("✅ Create Project"):
-            if due <= start:
-                st.error("Cannot submit: Due date must be later than the start date.")
-            elif not name or not client:
-                st.error("Name and client are required.")
-            else:
-                new_proj = {
-                    "name": name,
-                    "client": client,
-                    "description": description,
-                    "startDate": start.isoformat(),
-                    "dueDate": due.isoformat(),
-                    "team": team,
-                    "template": st.session_state.selected_template or "Custom",
-                    "levels": st.session_state.custom_levels.copy(),
-                    "level": st.session_state.level_index,
-                    "timestamps": st.session_state.level_timestamps.copy(),
-                    "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat(),
-                    "created_by": st.session_state.get("username", "unknown"),
-                }
-                
-                project_id = save_project_to_db(new_proj)
-                if project_id:
-                    new_proj["id"] = project_id
-                    st.session_state.projects.append(new_proj)
-                    st.success("Project created and saved to database!")
-                    # Update the client's project count
-                    try:
-                        project_count = projects_collection.count_documents({"client": client})
-                        clients_collection.update_one(
-                            {"name": client},
-                            {"$set": {"project_count": project_count}}
-                        )
-                    except Exception as e:
-                        st.warning(f"Project saved, but failed to update client project count: {e}")
-
-                    
-                    # Reset form state
-                    st.session_state.level_index = -1
-                    st.session_state.level_timestamps = {}
-                    st.session_state.custom_levels = []
-                    st.session_state.selected_template = ""
-                    st.session_state.view = "dashboard"
-                    update_users_with_project(team, name)
-                    # Also update the manager/team lead's profile with the project
-                    users_collection.update_one(
-                        {"username": st.session_state.get("username", "")},
-                        {"$addToSet": {"project": name}}
-                    )
-                    st.rerun()
-
-    def show_edit_form():
-        st.title("✏ Edit Project")
-
-        if st.button("← Back", key="back_button"):
-            st.session_state.view = "dashboard"  # or "login", or any other previous state
-            st.rerun()
-
-        pid = st.session_state.edit_project_id
-        project = next((p for p in st.session_state.projects if p["id"] == pid), None)
-
-        if not project:
-            st.error("Project not found.")
-            return
-
-        # Ensure project has required fields with defaults
-        if "levels" not in project:
-            project["levels"] = ["Initial", "Invoice", "Payment"]
-        if "level" not in project:
-            project["level"] = -1
-        if "timestamps" not in project:
-            project["timestamps"] = {}
-        if "team" not in project:
-            project["team"] = []
-
-        original_team = project.get("team", [])
-        original_name = project.get("name", "")  # Store original name for comparison
-        
-        name = st.text_input("Project Name", value=project.get("name", ""))
-        CLIENTS = get_all_clients()
-        if not CLIENTS:
-            st.warning("⚠ No clients found in the database.")
-        client = st.selectbox("Client",
-                               options=CLIENTS, 
-                               index=CLIENTS.index(project.get("client", "")) if project.get("client", "") in CLIENTS else 0)
-        description = st.text_area("Project Description", value=project.get("description", ""))
-        start = st.date_input("Start Date", value=date.fromisoformat(project.get("startDate", date.today().isoformat())))
-        due = st.date_input("Due Date", value=date.fromisoformat(project.get("dueDate", date.today().isoformat())))
-        team = st.multiselect("Assign Team", TEAM_MEMBERS, default=project.get("team", []))
-
-        st.subheader("Progress")
-        def on_change_edit(new_index):
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            old_level = project["level"]
-            project["level"] = new_index
-            project.setdefault("timestamps", {})[str(new_index)] = timestamp
-            
-            # Update in database immediately
-            if update_project_level_in_db(pid, new_index, timestamp):
-                # Check if project reached Payment stage
-                project_levels = project.get("levels", [])
-                if (new_index >= 0 and new_index < len(project_levels) and 
-                    project_levels[new_index] == "Payment"):
-                    # Move project to completed for all team members
-                    project_name = project.get("name", "")
-                    team_members = project.get("team", [])
-                    moved_count = move_project_to_completed(project_name, team_members)
-                    if moved_count > 0:
-                        st.session_state[f"project_completed_message_{pid}"] = f"Project moved to completed for {moved_count} team member(s)!"
-                
-                st.session_state[f"edit_level_update_success_{pid}"] = True
-        
-        # Check for success message from previous level update
-        if st.session_state.get(f"edit_level_update_success_{pid}", False):
-            st.success("Project level updated!")
-            st.session_state[f"edit_level_update_success_{pid}"] = False
-        
-        # Check for project completion message
-        if st.session_state.get(f"project_completed_message_{pid}", False):
-            st.success(st.session_state[f"project_completed_message_{pid}"])
-            st.session_state[f"project_completed_message_{pid}"] = False
-            
-        render_level_checkboxes("edit", pid, int(project.get("level", -1)), project.get("timestamps", {}), project.get("levels", ["Initial", "Invoice", "Payment"]), on_change_edit)
-
-        if st.button("💾 Save"):
-            if due <= start:
-                st.error("Cannot save: Due date must be later than the start date.")
-            elif not name or not client:
-                st.error("Name and client are required.")
-            else:
-                updated_project = {
-                    "name": name,
-                    "client": client,
-                    "description": description,
-                    "startDate": start.isoformat(),
-                    "dueDate": due.isoformat(),
-                    "team": team,
-                    "updated_at": datetime.now().isoformat(),
-                    "created_by": st.session_state.get("username", "unknown"),
-                    "created_at": project.get("created_at", datetime.now().isoformat()),
-                    "levels": project.get("levels", ["Initial", "Invoice", "Payment"]),
-                    "level": project.get("level", -1),
-                    "timestamps": project.get("timestamps", {})
-                }
-                
-                if update_project_in_db(pid, updated_project):
-                    # Recalculate project count for the (possibly new) client
-                    try:
-                        updated_count = projects_collection.count_documents({"client": client})
-                        clients_collection.update_one(
-                            {"name": client},
-                            {"$set": {"project_count": updated_count}}
-                        )
-                    except Exception as e:
-                        st.warning(f"Failed to update project count for edited client: {e}")
-
-                    # Also update old client count if the client was changed
-                    if client != project.get("client", ""):
-                        try:
-                            old_client = project.get("client", "")
-                            old_count = projects_collection.count_documents({"client": old_client})
-                            clients_collection.update_one(
-                                {"name": old_client},
-                                {"$set": {"project_count": old_count}}
-                            )
-                        except Exception as e:
-                            st.warning(f"Failed to update project count for old client: {e}")
-
-                    success_messages = []
-                    
-                    # Check if project name has changed and update user profiles accordingly
-                    if original_name != name:
-                        updated_count = update_project_name_in_user_profiles(original_name, name)
-                        if updated_count > 0:
-                            success_messages.append(f"Project name updated in {updated_count} user profiles!")
-                    
-                    # Handle team member changes
-                    added_users = set(team) - set(original_team)
-                    removed_users = set(original_team) - set(team)
-                    
-                    if added_users:
-                        # Add new project to newly assigned users (use current project name)
-                        update_users_with_project(list(added_users), name)
-                        success_messages.append(f"Project added to {len(added_users)} new team member(s): {', '.join(added_users)}")
-                    
-                    if removed_users:
-                        # Remove project from users who are no longer on the team (use current project name)
-                        remove_project_from_users(list(removed_users), [], name)
-                        success_messages.append(f"Project removed from {len(removed_users)} former team member(s): {', '.join(removed_users)}")
-                    
-                    project.update(updated_project)
-                    
-                    # Display all success messages
-                    if success_messages:
-                        for message in success_messages:
-                            st.success(message)
-                    else:
-                        st.success("Changes saved to database!")
-                    
-                    st.session_state.view = "dashboard"
-                    st.rerun()
-
-    # ───── Navigation ─────
-    if st.session_state.view == "dashboard":
-        show_dashboard()
-    elif st.session_state.view == "create":
-        show_create_form()
-    elif st.session_state.view == "edit":
-        show_edit_form()

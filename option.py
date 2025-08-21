@@ -1,7 +1,9 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 import importlib
-
+import base64
+from PIL import Image
+from image_loader import render_image
 # Initialize session state
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -15,7 +17,15 @@ def load_page(module_name):
     module = importlib.import_module(f"pages2.{module_name}")
     module.run()
 
-st.set_page_config(layout="centered")
+st.set_page_config(layout="wide")
+
+
+def get_base64(bin_file):
+    with open(bin_file, 'rb') as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
+
 # Custom CSS for mobile-friendly UI
 st.markdown("""
     <style>
@@ -43,31 +53,28 @@ st.markdown("""
 if not st.session_state.authenticated:
     load_page("login")
 else:
-    st.sidebar.image(
-        "https://i0.wp.com/v-shesh.com/wp-content/uploads/2020/09/v-shesh.png?fit=188%2C70&ssl=1",
-        use_container_width=True,
-    )
+    render_image("vshesh_logo.png")
     with st.sidebar:
         if st.session_state["role"] == "user":
             selected = option_menu(
                 None,
-                ["Profile", "Documents", "Log","Logout"],
-                icons=["person", "file-earmark-richtext", "file-spreadsheet","box-arrow-right"],
+                ["Profile", "Documents", "Log","Projects","Clients","Opportunity","Logout"],
+                icons=["person", "file-earmark-richtext","kanban","file-spreadsheet","wallet","bi-gem","box-arrow-right"],
                
                 default_index=0
             )
         if st.session_state["role"] == "admin":
             selected = option_menu(
                 None,
-                ["Profile", "Documents","Log","Users","Projects","Clients","Logout"],
-                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","box-arrow-right"],
+                ["Profile", "Documents","Log","Users","Projects","Clients","Opportunity","Logout"],
+                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","bi-gem","box-arrow-right"],
                 default_index=0
             )
         if st.session_state["role"] == "manager":
             selected = option_menu(
                 None,
-                ["Profile", "Documents","Log","Users","Projects","Clients","Logout"],
-                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","box-arrow-right"],
+                ["Profile", "Documents","Log","Users","Projects","Clients","Opportunity","Logout"],
+                icons=["person", "file-earmark-richtext", "file-spreadsheet","people","kanban","wallet","bi-gem","box-arrow-right"],
                 default_index=0
             )
     # Detect tab switch and trigger rerun for fresh data
@@ -82,4 +89,4 @@ else:
         st.session_state.authenticated = False
         st.rerun()
     else:
-        load_page(selected.lower())  # Load 'profile' or 'settings'""
+        load_page(selected.lower()) 

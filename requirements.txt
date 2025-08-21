@@ -7,3 +7,6 @@ yagmail
 streamlit-autorefresh
 bcrypt
 certifi
+streamlit-aggrid
+streamlit_modal
+openpyxl

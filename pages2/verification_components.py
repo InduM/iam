@@ -1,0 +1,662 @@
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+from streamlit_modal import Modal
+from utils.utils_log import format_status_badge, format_priority_badge
+from bson import ObjectId 
+
+class VerificationComponents:
+    def __init__(self, log_manager):
+        self.log_manager = log_manager
+
+    def render_verification_tab(self):
+        """Enhanced verification tab with batch processing and undo functionality"""
+        st.subheader("✅ Pending Verification")
+        
+        try:
+            pending_logs = list(self.log_manager.logs.find({"status": "Pending Verification"}))
+            recently_verified = list(self.log_manager.logs.find({
+                "status": "Completed", 
+                "verified": True,
+                "verified_at": {"$exists": True}
+            }).sort("verified_at", -1).limit(20))  # Last 20 verified tasks
+        except Exception as e:
+            st.error(f"❌ Error fetching logs: {str(e)}")
+            return
+            
+        if len(pending_logs) == 0:
+            st.success("No tasks pending verification.")
+        else:
+            # Verification stats
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Pending Tasks", len(pending_logs))
+            with col2:
+                users_count = len(set(log['assigned_user'] for log in pending_logs))
+                st.metric("Users Involved", users_count)
+            with col3:
+                projects_count = len(set(log['project_name'] for log in pending_logs))
+                st.metric("Projects Affected", projects_count)
+
+            # Batch verification
+            with st.expander("⚡ Batch Verification", expanded=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Verify All", key="batch_verify_all", type="primary"):
+                        if st.checkbox("⚠️ Confirm batch verification", key="batch_verify_confirm"):
+                            verified_count = self._batch_verify_tasks(pending_logs)
+                            st.success(f"✅ Verified {verified_count} tasks!")
+                            st.rerun()
+                with col2:
+                    selected_user = st.selectbox("Verify by User", key="batch_verify_user_select",
+                                            options=["Select User"] + list(set(log['assigned_user'] for log in pending_logs)))
+                    if selected_user != "Select User":
+                        user_tasks = [log for log in pending_logs if log['assigned_user'] == selected_user]
+                        if st.button(f"✅ Verify {selected_user}'s Tasks ({len(user_tasks)})", key=f"batch_verify_user_{selected_user}"):
+                            verified_count = self._batch_verify_tasks(user_tasks)
+                            st.success(f"✅ Verified {verified_count} tasks for {selected_user}!")
+                            st.rerun()
+
+            # Individual verification
+            st.divider()
+            st.markdown("### Individual Verification")
+            
+            # Enhanced verification table
+            try:
+                df = pd.DataFrame([
+                    {
+                        "Project": log["project_name"],
+                        "Member": log["assigned_user"],
+                        "Stage": log["stage_name"],
+                        "Substage": log["substage_name"],
+                        "Completed At": self._format_datetime(log.get("completed_clicked_at")),
+                        "Priority": log.get("priority", "Medium"),
+                        "ID": str(log["_id"])
+                    }
+                    for log in pending_logs
+                ])
+                
+                st.dataframe(df.drop('ID', axis=1), use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ Error creating verification table: {str(e)}")
+
+            # Individual verification controls
+            for i, log in enumerate(pending_logs):
+                with st.container():
+                    col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
+                    
+                    with col1:
+                        st.write(f"**{log['project_name']}**")
+                    with col2:
+                        st.write(f"👤 {log['assigned_user']}")
+                    with col3:
+                        st.write(f"📋 {log['substage_name']}")
+                    with col4:
+                        priority_badge = format_priority_badge(log.get('priority', 'Medium'))
+                        st.markdown(priority_badge, unsafe_allow_html=True)
+                    with col5:
+                        if st.button("✅", key=f"verify_individual_{log['_id']}", help="Verify this task"):
+                            try:
+                                self._verify_task_completion_with_timestamp(log)
+                                st.success(f"✅ Verified: {log['substage_name']}")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Verification failed: {str(e)}")
+                    
+                    if i < len(pending_logs) - 1:
+                        st.divider()
+
+        # Recently Verified Tasks with Undo Option - ALWAYS SHOW THIS SECTION
+        st.divider()
+        st.subheader("🔄 Recently Verified Tasks")
+        
+        if recently_verified:
+            st.caption("Last 20 verified tasks - you can undo verification if needed")
+            
+            with st.expander("📋 Recently Verified Tasks", expanded=False):
+                # Batch undo option
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Undo All Recent Verifications", key="batch_undo_all", type="secondary"):
+                        if st.checkbox("⚠️ Confirm batch undo", key="batch_undo_confirm"):
+                            undone_count = self._batch_undo_verifications(recently_verified)
+                            st.warning(f"🔄 Undone {undone_count} verifications!")
+                            st.rerun()
+                with col2:
+                    selected_user_undo = st.selectbox("Undo by User", key="batch_undo_user_select",
+                                                options=["Select User"] + list(set(log['assigned_user'] for log in recently_verified)))
+                    if selected_user_undo != "Select User":
+                        user_verified_tasks = [log for log in recently_verified if log['assigned_user'] == selected_user_undo]
+                        if st.button(f"🔄 Undo {selected_user_undo}'s Verifications ({len(user_verified_tasks)})", key=f"batch_undo_user_{selected_user_undo}"):
+                            undone_count = self._batch_undo_verifications(user_verified_tasks)
+                            st.warning(f"🔄 Undone {undone_count} verifications for {selected_user_undo}!")
+                            st.rerun()
+
+                # Individual undo controls
+                for i, log in enumerate(recently_verified):
+                    with st.container():
+                        col1, col2, col3, col4, col5, col6 = st.columns([2, 2, 2, 1.5, 1.5, 1])
+                        
+                        with col1:
+                            st.write(f"**{log['project_name']}**")
+                        with col2:
+                            st.write(f"👤 {log['assigned_user']}")
+                        with col3:
+                            st.write(f"📋 {log['substage_name']}")
+                        with col4:
+                            st.write(f"🔍 {self._format_datetime(log.get('verified_at'))}")
+                        with col5:
+                            status_badge = format_status_badge(log.get('status', 'Unknown'))
+                            st.markdown(status_badge, unsafe_allow_html=True)
+                        with col6:
+                            if st.button("🔄", key=f"undo_individual_{log['_id']}", help="Undo verification"):
+                                try:
+                                    self._undo_task_verification(log)
+                                    st.warning(f"🔄 Undone verification: {log['substage_name']}")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Undo failed: {str(e)}")
+                        
+                        if i < len(recently_verified) - 1:
+                            st.divider()
+        else:
+            # Show empty state but still show the section
+            st.caption("No recently verified tasks available")
+            
+            with st.expander("📋 Recently Verified Tasks", expanded=False):
+                st.info("📭 No recently verified tasks to display")
+                st.markdown("""
+                **What you can do here:**
+                - View the last 20 verified tasks
+                - Undo verification for individual tasks
+                - Batch undo verifications by user
+                - Tasks will appear here after verification
+                """)
+                
+                # Show placeholder metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Recently Verified", 0)
+                with col2:
+                    st.metric("Available to Undo", 0)
+                with col3:
+                    st.metric("Users Involved", 0)
+
+    def _undo_task_verification(self, log):
+        """Undo verification for a specific task, reverting it to Pending Verification status and updating project page."""
+        try:
+            project_id = log["project_id"]
+            stage_key = log["stage_key"]
+            substage_id = log.get("substage_id")
+            current_time = datetime.now()
+
+            if substage_id:
+                # Undo verification for all logs of the same substage
+                self.log_manager.logs.update_many(
+                    {"project_id": project_id, "stage_key": stage_key, "substage_id": substage_id},
+                    {"$set": {
+                        "is_completed": False,
+                        "status": "Pending Verification",
+                        "verified": False,
+                        "updated_at": current_time
+                    },
+                    "$unset": {
+                        "verified_at": "",
+                        "completed_at": ""
+                    }}
+                )
+                
+                # Update project's substage completion status to false
+                self._update_project_substage_completion(project_id, stage_key, substage_id, False)
+                
+            else:
+                # Stage-level log: undo verification for all logs of this stage
+                self.log_manager.logs.update_many(
+                    {"project_id": project_id, "stage_key": stage_key},
+                    {"$set": {
+                        "is_completed": False,
+                        "status": "Pending Verification",
+                        "verified": False,
+                        "updated_at": current_time
+                    },
+                    "$unset": {
+                        "verified_at": "",
+                        "completed_at": ""
+                    }}
+                )
+                
+                # Update project's stage completion status to false
+                self._update_project_stage_completion(project_id, stage_key, False)
+
+            # Recalculate and update stage completion status
+            self.log_manager.update_stage_completion_status(project_id, stage_key)
+            
+            # Set session state to stay on verification tab
+            st.session_state.active_tab = 2  # Verification tab index
+            
+        except Exception as e:
+            st.error(f"❌ Failed to undo task verification: {str(e)}")
+            raise
+
+
+    def _update_project_stage_completion(self, project_id, stage_key, completed_status):
+        """Update stage completion status in the project document"""
+        try:
+            # Update the project's level (stage completion)
+            if completed_status:
+                # Get current project to determine next level
+                project = self.log_manager.projects.find_one({"_id": ObjectId(project_id)})
+                if project:
+                    current_level = project.get("level", 0)
+                    stage_index = int(stage_key) if stage_key.isdigit() else 0
+                    
+                    # Only update level if this stage is the current or next stage
+                    if stage_index >= current_level:
+                        new_level = stage_index + 1
+                        self.log_manager.projects.update_one(
+                            {"_id": ObjectId(project_id)},
+                            {"$set": {
+                                "level": new_level,
+                                f"timestamps.{stage_key}": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "updated_at": datetime.now()
+                            }}
+                        )
+            else:
+                # When undoing, we need to be careful not to break the progression
+                project = self.log_manager.projects.find_one({"_id": ObjectId(project_id)})
+                if project:
+                    stage_index = int(stage_key) if stage_key.isdigit() else 0
+                    current_level = project.get("level", 0)
+                    
+                    # Only decrease level if this was the most recently completed stage
+                    if stage_index == current_level - 1:
+                        self.log_manager.projects.update_one(
+                            {"_id": ObjectId(project_id)},
+                            {"$set": {
+                                "level": stage_index,
+                                "updated_at": datetime.now()
+                            },
+                            "$unset": {
+                                f"timestamps.{stage_key}": ""
+                            }}
+                        )
+                        
+        except Exception as e:
+            st.error(f"❌ Failed to update project stage completion: {str(e)}")
+            raise
+
+
+    def _update_project_substage_completion(self, project_id, stage_key, substage_id, completed_status):
+        """Update substage completion status in the project document"""
+        try:
+            # Parse the substage_id to extract the substage index
+            # Format: substage_{stage_index}_{substage_index}_{random_id}
+            parts = substage_id.split('_')
+            if len(parts) >= 3:
+                stage_index = parts[1]
+                substage_index = parts[2]
+                
+                # Update the project's substage_completion field
+                update_field = f"substage_completion.{stage_index}.{substage_index}"
+                
+                self.log_manager.projects.update_one(
+                    {"_id": ObjectId(project_id)},
+                    {"$set": {
+                        update_field: completed_status,
+                        "updated_at": datetime.now()
+                    }}
+                )
+                
+                # Also update the substage timestamps if completing
+                if completed_status:
+                    timestamp_field = f"substage_timestamps.{stage_index}.{substage_index}"
+                    self.log_manager.projects.update_one(
+                        {"_id": ObjectId(project_id)},
+                        {"$set": {
+                            timestamp_field: datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }}
+                    )
+                else:
+                    # Remove timestamp if undoing completion
+                    timestamp_field = f"substage_timestamps.{stage_index}.{substage_index}"
+                    self.log_manager.projects.update_one(
+                        {"_id": ObjectId(project_id)},
+                        {"$unset": {timestamp_field: ""}}
+                    )
+                    
+        except Exception as e:
+            st.error(f"❌ Failed to update project substage completion: {str(e)}")
+            raise
+
+
+
+    def _batch_undo_verifications(self, tasks):
+        """Undo verification for multiple tasks at once"""
+        undone_count = 0
+        for task in tasks:
+            try:
+                self._undo_task_verification(task)
+                undone_count += 1
+            except Exception as e:
+                st.error(f"❌ Failed to undo verification for task {task.get('substage_name', 'Unknown')}: {str(e)}")
+        # Set session state to stay on verification tab
+        st.session_state.active_tab = 2  # Verification tab index
+        return undone_count
+
+    def _batch_verify_tasks(self, tasks):
+        """Verify multiple tasks at once"""
+        verified_count = 0
+        for task in tasks:
+            try:
+                self._verify_task_completion_with_timestamp(task)
+                verified_count += 1
+            except Exception as e:
+                st.error(f"❌ Failed to verify task {task.get('substage_name', 'Unknown')}: {str(e)}")
+        # Set session state to stay on verification tab
+        st.session_state.active_tab = 2  # Verification tab index
+        return verified_count
+
+    def _verify_task_completion_with_timestamp(self, log):
+        """Verify all logs of the same substage or stage, then update stage completion and project page."""
+        try:
+            project_id = log["project_id"]
+            stage_key = log["stage_key"]
+            substage_id = log.get("substage_id")
+            current_time = datetime.now()
+            
+            if substage_id:
+                # Verify all logs for the same substage
+                self.log_manager.logs.update_many(
+                    {"project_id": project_id, "stage_key": stage_key, "substage_id": substage_id},
+                    {"$set": {
+                        "is_completed": True,
+                        "status": "Completed",
+                        "verified": True,
+                        "verified_at": current_time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "updated_at": current_time
+                    }}
+                )
+                
+                # Update project's substage completion status
+                self._update_project_substage_completion(project_id, stage_key, substage_id, True)
+                
+            else:
+                # Stage-level log: verify all logs for this stage
+                self.log_manager.logs.update_many(
+                    {"project_id": project_id, "stage_key": stage_key},
+                    {"$set": {
+                        "is_completed": True,
+                        "status": "Completed",
+                        "verified": True,
+                        "verified_at": current_time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "updated_at": current_time
+                    }}
+                )
+                
+                # Update project's stage completion status
+                self._update_project_stage_completion(project_id, stage_key, True)
+
+            # Recalculate and update stage completion
+            self.log_manager.update_stage_completion_status(project_id, stage_key)
+            
+            # Set session state to stay on verification tab
+            st.session_state.active_tab = 2  # Verification tab index
+            
+        except Exception as e:
+            st.error(f"❌ Failed to verify task completion: {str(e)}")
+            raise
+
+        
+    def _format_datetime(self, dt):
+        """Format datetime for display with improved error handling"""
+        try:
+            if dt is None:
+                return "Not Recorded"
+            elif isinstance(dt, str):
+                return dt
+            elif isinstance(dt, datetime):
+                return dt.strftime('%Y-%m-%d %H:%M')
+            return str(dt)
+        except Exception:
+            return "Invalid DateTime"
+
+
+class TaskModalComponents:
+    def __init__(self, log_manager):
+        self.log_manager = log_manager
+
+    def show_task_modal(self, log):
+        """Enhanced task modal with more functionality and error handling"""
+        try:
+            modal = Modal(f"Task Details: {log.get('substage_name', 'Unknown Task')}", 
+                         key=f"task_modal_{log['_id']}", max_width=800)
+            
+            if modal.is_open():
+                with modal.container():
+                    # Header with key info
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    with col1:
+                        st.markdown(f"### 📝 {log.get('substage_name', 'Unknown Task')}")
+                        st.markdown(f"**Project:** {log.get('project_name', 'Unknown')}")
+                        st.markdown(f"**Stage:** {log.get('stage_name', 'Unknown')}")
+                    with col2:
+                        st.markdown(f"**Status:**")
+                        st.markdown(format_status_badge(log.get('status', 'Unknown')), unsafe_allow_html=True)
+                    with col3:
+                        st.markdown(f"**Priority:**")
+                        st.markdown(format_priority_badge(log.get('priority', 'Medium')), unsafe_allow_html=True)
+                    
+                    st.divider()
+                    
+                    # Detailed information in tabs
+                    tab1, tab2, tab3 = st.tabs(["📋 Details", "📅 Timeline", "⚡ Actions"])
+                    
+                    with tab1:
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("**Assignment Info:**")
+                            st.write(f"👤 **Assigned User:** {log.get('assigned_user', 'Unknown')}")
+                            st.write(f"📅 **Start Date:** {self._format_date(log.get('start_date'))}")
+                            st.write(f"⏰ **Stage Deadline:** {self._format_date(log.get('stage_deadline'))}")
+                            st.write(f"⏰ **Substage Deadline:** {self._format_date(log.get('substage_deadline'))}")
+                        
+                        with col2:
+                            st.markdown("**Progress Info:**")
+                            st.write(f"✅ **Completed:** {'Yes' if log.get('is_completed') else 'No'}")
+                            st.write(f"🔍 **Verified:** {'Yes' if log.get('verified') else 'No'}")
+                            if log.get('completed_at'):
+                                st.write(f"📅 **Completed At:** {self._format_datetime(log.get('completed_at'))}")
+                            if log.get('verified_at'):
+                                st.write(f"📅 **Verified At:** {log.get('verified_at')}")
+                        
+                        st.divider()
+                        
+                        # Editable description
+                        current_desc = log.get('description', 'No description available')
+                        new_desc = st.text_area("📝 **Description:**", value=current_desc, height=120, key=f"desc_{log['_id']}")
+                        
+                        if new_desc != current_desc:
+                            if st.button("💾 Save Description", key=f"save_desc_{log['_id']}"):
+                                try:
+                                    self.log_manager.logs.update_one(
+                                        {"_id": log["_id"]}, 
+                                        {"$set": {"description": new_desc, "updated_at": datetime.now()}}
+                                    )
+                                    st.success("✅ Description updated!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Failed to update description: {str(e)}")
+                    
+                    with tab2:
+                        st.markdown("**📅 Task Timeline:**")
+                        
+                        timeline_events = []
+                        if log.get('created_at'):
+                            timeline_events.append(("🆕 Created", log['created_at']))
+                        if log.get('completed_clicked_at'):
+                            timeline_events.append(("✅ Marked Complete", log['completed_clicked_at']))
+                        if log.get('verified_at'):
+                            timeline_events.append(("🔍 Verified", log['verified_at']))
+                        if log.get('updated_at'):
+                            timeline_events.append(("🔄 Last Updated", log['updated_at']))
+                        
+                        for event_name, event_time in timeline_events:
+                            formatted_time = self._format_datetime(event_time)
+                            st.write(f"**{event_name}:** {formatted_time}")
+                        
+                        # Progress visualization
+                        if log.get('start_date') and log.get('substage_deadline'):
+                            try:
+                                start_date = datetime.strptime(log['start_date'], '%Y-%m-%d')
+                                end_date = datetime.strptime(log['substage_deadline'], '%Y-%m-%d')
+                                current_date = datetime.now()
+                                
+                                total_days = (end_date - start_date).days
+                                elapsed_days = (current_date - start_date).days
+                                progress = min(max(elapsed_days / total_days if total_days > 0 else 0, 0), 1)
+                                
+                                st.markdown("**📊 Time Progress:**")
+                                st.progress(progress)
+                                st.write(f"Days elapsed: {elapsed_days} / {total_days}")
+                            except Exception:
+                                st.write("Unable to calculate time progress")
+                    
+                    with tab3:
+                        st.markdown("**⚡ Available Actions:**")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            if log.get('status') == "Pending Verification":
+                                if st.button("✅ Verify Completion", key=f"verify_modal_{log['_id']}", type="primary"):
+                                    try:
+                                        self._verify_task_completion_with_timestamp(log)
+                                        st.success("✅ Task verified and marked completed!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Verification failed: {str(e)}")
+                            elif not log.get('is_completed', False):
+                                if st.button("✅ Mark Complete", key=f"complete_modal_{log['_id']}", type="primary"):
+                                    try:
+                                        if self.log_manager.complete_task(str(log['_id'])):
+                                            st.success("✅ Task completed!")
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ Failed to complete task")
+                                    except Exception as e:
+                                        st.error(f"❌ Completion failed: {str(e)}")
+                            else:
+                                st.success("✅ Task Completed")
+                        
+                        with col2:
+                            # Priority change
+                            current_priority = log.get('priority', 'Medium')
+                            new_priority = st.selectbox(
+                                "Change Priority", 
+                                ["High", "Medium", "Low", "Critical"], 
+                                index=["High", "Medium", "Low", "Critical"].index(current_priority),
+                                key=f"priority_{log['_id']}"
+                            )
+                            if new_priority != current_priority:
+                                if st.button("🔄 Update Priority", key=f"update_priority_{log['_id']}"):
+                                    try:
+                                        self.log_manager.logs.update_one(
+                                            {"_id": log["_id"]}, 
+                                            {"$set": {"priority": new_priority, "updated_at": datetime.now()}}
+                                        )
+                                        st.success(f"🔄 Priority updated to {new_priority}!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Priority update failed: {str(e)}")
+                        
+                        with col3:
+                            # Danger zone
+                            st.markdown("**⚠️ Danger Zone:**")
+                            if st.button("🗑️ Delete Task", key=f"delete_modal_{log['_id']}", type="secondary"):
+                                if st.checkbox("⚠️ Confirm deletion", key=f"confirm_delete_{log['_id']}"):
+                                    try:
+                                        self.log_manager.logs.delete_one({"_id": log["_id"]})
+                                        st.warning("🗑️ Task deleted!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Deletion failed: {str(e)}")
+                    
+                    # Close modal button
+                    st.divider()
+                    if st.button("❌ Close", key=f"close_modal_{log['_id']}"):
+                        modal.close()
+                        
+        except Exception as e:
+            st.error(f"❌ Error displaying task modal: {str(e)}")
+
+    def _verify_task_completion_with_timestamp(self, log):
+        """Verify all logs of the same substage or stage, then update stage completion."""
+        try:
+            project_id = log["project_id"]
+            stage_key = log["stage_key"]
+            substage_id = log.get("substage_id")
+            current_time = datetime.now()
+
+            if substage_id:
+                # Verify all logs for the same substage
+                self.log_manager.logs.update_many(
+                    {"project_id": project_id, "stage_key": stage_key, "substage_id": substage_id},
+                    {"$set": {
+                        "is_completed": True,
+                        "status": "Completed",
+                        "verified": True,
+                        "verified_at": current_time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "updated_at": current_time
+                    }}
+                )
+            else:
+                # Stage-level log: verify all logs for this stage
+                self.log_manager.logs.update_many(
+                    {"project_id": project_id, "stage_key": stage_key},
+                    {"$set": {
+                        "is_completed": True,
+                        "status": "Completed",
+                        "verified": True,
+                        "verified_at": current_time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "updated_at": current_time
+                    }}
+                )
+
+            # Recalculate and update stage completion
+            self.log_manager.update_stage_completion_status(project_id, stage_key)
+        except Exception as e:
+            st.error(f"❌ Failed to verify task completion: {str(e)}")
+            raise
+
+    def _format_date(self, date_str):
+        """Format date string for display with improved error handling"""
+        if not date_str or date_str in ['1970-01-01 00:00:00', None, '']:
+            return "Not Set"
+        try:
+            if isinstance(date_str, str):
+                # Try different date formats
+                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%d/%m/%Y']:
+                    try:
+                        dt = datetime.strptime(date_str, fmt)
+                        return dt.strftime('%Y-%m-%d')
+                    except ValueError:
+                        continue
+                return str(date_str)
+            elif isinstance(date_str, datetime):
+                return date_str.strftime('%Y-%m-%d')
+            return str(date_str)
+        except Exception:
+            return "Invalid Date"
+
+    def _format_datetime(self, dt):
+        """Format datetime for display with improved error handling"""
+        try:
+            if dt is None:
+                return "Not Recorded"
+            elif isinstance(dt, str):
+                return dt
+            elif isinstance(dt, datetime):
+                return dt.strftime('%Y-%m-%d %H:%M')
+            return str(dt)
+        except Exception:
+            return "Invalid DateTime"

@@ -1,203 +1,198 @@
 import streamlit as st
-from utils import is_logged_in
-from datetime import datetime, date, timedelta
-from pymongo import MongoClient
-import certifi
+import pandas as pd
+from datetime import datetime
+from backend.log_backend import ProjectLogManager
 
+class ProjectLogFrontend:
+    def __init__(self):
+        self.log_manager = ProjectLogManager()
 
-def run():
-    # ✅ MongoDB connection
-    MONGO_URI = st.secrets["MONGO_URI"]
-    client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
-    db = client["user_db"]
-    logs_collection = db["logs"]
-    users_collection = db["users"]
-    clients_collection = db["clients"]  # Add clients collection
-
-    def create_default_log():
-        return {
-            "Time": datetime.now().strftime("%H:%M"),
-            "Project Name": "",
-            "Client Name": "",
-            "Priority": "",
-            "Description": "",
-            "Category": "",
-            "Follow up": ""
-        }
-
-    # ✅ Login check
-    if not is_logged_in():
-        st.switch_page("option.py")
-
-    username = st.session_state["username"]
-    log_columns = [
-        ("Time", 200), ("Project Name", 200), ("Client Name", 200), ("Priority", 200),
-        ("Description", 200), ("Category", 300), ("Follow up", 300)
-    ]
-    user_doc = users_collection.find_one({"username": username})
-    assigned_projects = user_doc.get("project", []) if user_doc else []
-    if isinstance(assigned_projects, str):
-        assigned_projects = [assigned_projects]
-
-    # ✅ Fetch client names from MongoDB
-    @st.cache_data(ttl=300)  # Cache for 5 minutes to improve performance
-    def get_client_names():
-        try:
-            # Assuming clients collection has documents with a "name" field
-            clients = list(clients_collection.find({}, {"name": 1, "_id": 0}))
-            client_names = [client.get("name", "") for client in clients if client.get("name")]
-            return sorted(client_names)  # Sort alphabetically
-        except Exception as e:
-            st.error(f"Error fetching clients: {e}")
-            return []
-
-    # ✅ Get user's assigned projects
-    def get_user_projects():
-        try:
-            # Return sorted list of assigned projects
-            if assigned_projects:
-                return sorted(assigned_projects)
-            else:
-                return []
-        except Exception as e:
-            st.error(f"Error getting user projects: {e}")
-            return []
-
-    client_names = get_client_names()
-    user_projects = get_user_projects()
-
-    # ✅ Session state setup
-    if "last_selected_date" not in st.session_state:
-        st.session_state.last_selected_date = None
-    if "logs" not in st.session_state:
-        st.session_state.logs = []
-    if "refresh_triggered" not in st.session_state:
-        st.session_state.refresh_triggered = False
-
-    # ✅ Datepicker & control buttons
-    today = date.today()
-    default_date = today
-    start_of_week = today - timedelta(days=today.weekday())
-    start_of_prev_week = start_of_week - timedelta(days=7)
-    end_of_week = start_of_week + timedelta(days=6)
-
-    col1, col2, col3 = st.columns([5, 1, 2])
-    with col1:
-        selected_date = st.date_input("", value=default_date, key="selected_date", label_visibility="collapsed")
-        can_add_log = start_of_prev_week <= selected_date <= end_of_week
-
-    with col2:
-        st.button("➕ Log", on_click=lambda: st.session_state.logs.append(create_default_log()), disabled=not can_add_log)
-
-    with col3:
-        def refresh_logs():
-            with st.spinner("Refreshing logs..."):
-                query = {"Date": selected_date.strftime("%Y-%m-%d"), "Username": username}
-                st.session_state.logs = list(logs_collection.find(query, {"_id": 0, "Date": 0, "Username": 0}))
-                if not st.session_state.logs:
-                    st.session_state.logs.append(create_default_log())
-                st.session_state.last_selected_date = selected_date
-                st.session_state.refresh_triggered = False
-
-        if st.button("🔄 Refresh") and not st.session_state.refresh_triggered:
-            st.session_state.refresh_triggered = True
-            refresh_logs()
-
-    selected_date_str = st.session_state.selected_date.strftime("%Y-%m-%d")
-
-    # ✅ Fetch logs on date change
-    if st.session_state.last_selected_date != st.session_state.selected_date:
-        st.session_state.logs = []
-        query = {"Date": selected_date_str, "Username": username}
-        for log in logs_collection.find(query, {"_id": 0, "Date": 0, "Username": 0}):
-            st.session_state.logs.append(log)
-        if not st.session_state.logs:
-            st.session_state.logs.append(create_default_log())
-        st.session_state.last_selected_date = st.session_state.selected_date
-
-    def delete_log_row(index):
-        log_to_delete = st.session_state.logs[index]
-        logs_collection.delete_one({
-            "Date": selected_date_str,
-            "Time": log_to_delete["Time"],
-            "Username": username
-        })
-        del st.session_state.logs[index]
-
-    # ✅ Log table
-    with st.container():
-        st.markdown('<div class="scroll-container"><div class="block-container">', unsafe_allow_html=True)
-
-        header_cols = st.columns([w for _, w in log_columns] + [80])
-        for i, (col_name, _) in enumerate(log_columns):
-            header_cols[i].markdown(f"<div class='column-header'>{col_name}</div>", unsafe_allow_html=True)
-        header_cols[-1].markdown("<div class='column-header'>Action</div>", unsafe_allow_html=True)
-
-        for i, log in enumerate(st.session_state.logs):
-            row_cols = st.columns([w for _, w in log_columns] + [50])
-            for j, (col, _) in enumerate(log_columns):
-                key = f"{col}_{i}"
-                with row_cols[j]:
-                    st.markdown("<div class='column-input'>", unsafe_allow_html=True)
-
-                    if col == "Time":
-                        log_time = datetime.strptime(log[col], "%H:%M").time() if isinstance(log[col], str) else log.get(col, datetime.now().time())
-                        new_time = st.time_input("", value=log_time, key=key, label_visibility="collapsed")
-                        log[col] = new_time.strftime("%H:%M")
-
-                    elif col == "Priority":
-                        options = ["Low", "Medium", "High"]
-                        current_index = options.index(log[col]) if log[col] in options else 0
-                        log[col] = st.selectbox("", options=options, index=current_index, key=key, label_visibility="collapsed")
-
-                    elif col == "Category":
-                        options = [
-                            "Audit-Physical", "Audit-Digital", "Audit-Design", "Audit-Accessibility",
-                            "Audit-Policy", "Training-Onwards", "Training-Regular", "Sessions-Kiosk",
-                            "Sessions-Sensitization", "Sessions-Awareness", "Recruitment", "Other"
-                        ]
-                        current_index = options.index(log[col]) if log[col] in options else 0
-                        log[col] = st.selectbox("", options=options, index=current_index, key=key, label_visibility="collapsed")
-                        if log[col] == "Other":
-                            custom = st.text_input("Specify Other", label_visibility="collapsed", key=key + "_custom")
-                            log[col] = custom
-
-                    elif col == "Client Name":
-                        # Create dropdown with client names from MongoDB
-                        client_options = [""] + client_names  # Add empty option at the beginning
-                        try:
-                            current_index = client_options.index(log[col]) if log[col] in client_options else 0
-                        except ValueError:
-                            current_index = 0
-                        
-                        selected_client = st.selectbox("", options=client_options, index=current_index, key=key, label_visibility="collapsed")
-                        log[col] = selected_client
-
-                    elif col == "Project Name":
-                        # Create dropdown with user's assigned projects
-                        project_options = [""] + user_projects  # Add empty option at the beginning
-                        try:
-                            current_index = project_options.index(log[col]) if log[col] in project_options else 0
-                        except ValueError:
-                            current_index = 0
-                        
-                        selected_project = st.selectbox("", options=project_options, index=current_index, key=key, label_visibility="collapsed")
-                        log[col] = selected_project
-
-                    else:
-                        log[col] = st.text_area("", value=log[col], key=key, label_visibility="collapsed")
-
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-            if row_cols[-1].button("🗑️", key=f"delete_{i}"):
-                delete_log_row(i)
+    def render_toolbar(self, logs, context="default"):
+        """Enhanced toolbar with additional functionality"""
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+        
+        with col1:
+            if st.button("🔄 Refresh", key=f"toolbar_refresh_btn_{context}", help="Refresh the current view"):
                 st.rerun()
 
-        st.markdown('</div></div>', unsafe_allow_html=True)
+    def _status_cell_renderer(self):
+        """Custom cell renderer for status column"""
+        return """
+        function(params) {
+            const status = params.value;
+            const colors = {
+                'Completed': '#4CAF50',
+                'In Progress': '#FF9800',
+                'Overdue': '#F44336',
+                'Pending Verification': '#2196F3'
+            };
+            return '<span style="background-color:' + (colors[status] || '#666') + '; color:white; padding:2px 8px; border-radius:12px; font-size:0.8em;">' + status + '</span>';
+        }
+        """
 
-    # ✅ Save logs
-    if st.button("💾 Save"):
-        logs_collection.delete_many({"Date": selected_date_str, "Username": username})
-        for log in st.session_state.logs:
-            logs_collection.insert_one({"Date": selected_date_str, "Username": username, **log})
-        st.success("Logs saved to MongoDB successfully!")
+    def _priority_cell_renderer(self):
+        """Custom cell renderer for priority column"""
+        return """
+        function(params) {
+            const priority = params.value;
+            const colors = {
+                'High': '#FF5722',
+                'Medium': '#FF9800',
+                'Low': '#F9F9F9',
+                'Critical': '#FF0000'
+            };
+            return '<span style="background-color:' + (colors[priority] || '#666') + '; color:white; padding:2px 8px; border-radius:12px; font-size:0.8em;">' + priority + '</span>';
+        }
+        """
+
+    def _format_date(self, date_str):
+        """Format date string for display with improved error handling"""
+        if not date_str or date_str in ['1970-01-01 00:00:00', None, '']:
+            return "Not Set"
+        try:
+            if isinstance(date_str, str):
+                # Try different date formats
+                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%d/%m/%Y']:
+                    try:
+                        dt = datetime.strptime(date_str, fmt)
+                        return dt.strftime('%Y-%m-%d')
+                    except ValueError:
+                        continue
+                return str(date_str)
+            elif isinstance(date_str, datetime):
+                return date_str.strftime('%Y-%m-%d')
+            return str(date_str)
+        except Exception:
+            return "Invalid Date"
+
+    def _format_datetime(self, dt):
+        """Format datetime for display with improved error handling"""
+        try:
+            if dt is None:
+                return "Not Recorded"
+            elif isinstance(dt, str):
+                return dt
+            elif isinstance(dt, datetime):
+                return dt.strftime('%Y-%m-%d %H:%M')
+            return str(dt)
+        except Exception:
+            return "Invalid DateTime"
+
+    def _cleanup_orphaned_logs(self):
+        """Remove logs for non-existent projects"""
+        try:
+            project_ids = [p['_id'] for p in self.log_manager.get_projects()]
+            result = self.log_manager.logs.delete_many({"project_id": {"$nin": project_ids}})
+            return result.deleted_count
+        except Exception as e:
+            st.error(f"❌ Cleanup failed: {str(e)}")
+            return 0
+
+    # ==== UPDATED LOG.PY MAIN APPLICATION ====
+
+    def run(self):
+        """Main application runner with enhanced error handling and tab interface"""
+        if not self.log_manager.client:
+            st.error("❌ Cannot proceed without database connection")
+            with st.expander("🔧 Database Connection Debug"):
+                if st.button("🔍 Test Connection", key="main_debug_test_connection"):
+                    self.log_manager.debug_database_connection()
+            return
+
+        try:
+            user_role = st.session_state.get("role", "user")
+            
+            if user_role in ["admin", "manager"]:
+                # Admin/Manager interface with tabs
+                try:
+                    pending_count = self.log_manager.logs.count_documents({"status": "Pending Verification"})
+                    verification_tab_label = f"✅ Verification ({pending_count})" if pending_count > 0 else "✅ Verification"
+                    
+                    # Get deadline extension requests count
+                    deadline_count = self.log_manager.logs.count_documents({"status": "Pending Deadline Approval"})
+                    deadline_tab_label = f"⏰ Deadlines ({deadline_count})" if deadline_count > 0 else "⏰ Deadlines"
+                except Exception as e:
+                    st.warning(f"⚠️ Could not fetch pending counts: {str(e)}")
+                    verification_tab_label = "✅ Verification"
+                    deadline_tab_label = "⏰ Deadlines"
+
+                # Import here to avoid circular imports
+                from pages2.dashboard_components import DashboardComponents
+                from pages2.verification_components import VerificationComponents, TaskModalComponents
+                from pages2.task_management_components import TaskManagementComponents
+                from pages2.deadline_components import DeadlineComponents
+                
+                dashboard = DashboardComponents(self.log_manager)
+                verification = VerificationComponents(self.log_manager)
+                task_mgmt = TaskManagementComponents(self.log_manager)
+                deadline_mgmt = DeadlineComponents(self.log_manager)
+
+                # Create tabs using st.tabs() - Added new deadline tab
+                tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                    "📊 Dashboard", 
+                    "👤 Task Management", 
+                    verification_tab_label, 
+                    deadline_tab_label,
+                    "📋 Logs"
+                ])
+                
+                # Dashboard Tab
+                with tab1:
+                    try:
+                        dashboard.render_dashboard_tab()
+                    except Exception as e:
+                        st.error(f"❌ Dashboard error: {str(e)}")
+                        st.exception(e)
+                
+                # Task Management Tab
+                with tab2:
+                    try:
+                        task_mgmt.render_user_logs_tab(is_admin=True)
+                    except Exception as e:
+                        st.error(f"❌ Task management error: {str(e)}")
+                        st.exception(e)
+                
+                # Verification Tab
+                with tab3:
+                    try:
+                        verification.render_verification_tab()
+                    except Exception as e:
+                        st.error(f"❌ Verification error: {str(e)}")
+                        st.exception(e)
+                
+                # NEW: Deadline Tab
+                with tab4:
+                    try:
+                        deadline_mgmt.render_deadline_tab()
+                    except Exception as e:
+                        st.error(f"❌ Deadline management error: {str(e)}")
+                        st.exception(e)
+                
+                # Logs Tab
+                with tab5:
+                    try:
+                        task_mgmt.render_user_logs_tab(is_admin=False)
+                    except Exception as e:
+                        st.error(f"❌ User interface error: {str(e)}")
+                        st.exception(e)
+            else:
+                # Regular user interface
+                try:
+                    from pages2.task_management_components import TaskManagementComponents
+                    task_mgmt = TaskManagementComponents(self.log_manager)
+                    task_mgmt.render_user_logs_tab(is_admin=False)
+                except Exception as e:
+                    st.error(f"❌ User interface error: {str(e)}")
+                    st.exception(e)
+        
+        except Exception as e:
+            st.error(f"❌ Application error: {str(e)}")
+            st.exception(e)
+            
+def run():
+    try:
+        app = ProjectLogFrontend()
+        app.run()
+    except Exception as e:
+        st.error(f"❌ Failed to start application: {str(e)}")
+        st.exception(e)

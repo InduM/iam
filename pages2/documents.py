@@ -3,7 +3,7 @@ import pymongo
 import base64
 from PIL import Image
 import io
-from utils import is_logged_in
+from utils.utils_login import is_logged_in
 
 def run():
     if not is_logged_in():
@@ -56,7 +56,9 @@ def run():
             if uploaded_profile:
                 st.markdown("**Profile Image:**")
                 image_data = base64.b64decode(uploaded_profile["profile_image"]["data"])
-                st.image(image_data, caption=uploaded_profile["profile_image"]["filename"], width=256)
+                col1, col2, col3 = st.columns(3)
+                with col2:
+                    st.image(image_data, caption=uploaded_profile["profile_image"]["filename"], width=256)
 
             if uploaded_aadhar:
                 st.markdown("**Aadhar Document:**")

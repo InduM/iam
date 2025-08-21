@@ -1,13 +1,11 @@
 # login.py
 import streamlit as st
-from utils import check_login
+from utils.utils_login import check_login
 
-#def login():
 def run():
 
     with st.container():
         st.markdown('<div class="login-box">', unsafe_allow_html=True)
-        st.title("Login")
 
         with st.form("login_form", clear_on_submit=False):
             username = st.text_input("Username", label_visibility="collapsed")

@@ -1,273 +1,205 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from pymongo import MongoClient
-import certifi
+from backend.users_backend import DatabaseManager, UserService, LogService, ProjectService, ProfileService
+from utils.utils_users import SessionManager, DataUtils, ValidationUtils, UIHelpers
 
-def run():
-        # 🔌 Connect to MongoDB Atlas
-    uri = st.secrets["MONGO_URI"]
-    client = MongoClient(uri, tlsCAFile=certifi.where())
-    db = client["user_db"]
+# Inject global CSS for nicer visuals
+st.markdown("""
+<style>
+/* Card hover effect */
+.member-card:hover {
+    background-color: #f1f3f6;
+    transform: scale(1.02);
+    transition: all 0.2s ease-in-out;
+}
 
-    @st.cache_resource
-    def get_mongo_collection():
-        return db["users"]
+/* Rounded images */
+img.profile-pic {
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
 
-    @st.cache_resource
-    def get_logs_collection():
-        return db["logs"]
-    collection = get_mongo_collection()
+/* Buttons */
+div.stButton > button:hover {
+    background-color: #17a2b8;
+    color: white;
+    transform: scale(1.05);
+}
+</style>
+""", unsafe_allow_html=True)
 
-    # 🔄 Load and normalize team data
-    def load_team_data():
-        data = list(collection.find({}, {"_id": 0}))
-        for d in data:
-            proj = d.get("project")
-            if isinstance(proj, list):
-                continue
-            elif isinstance(proj, str):
-                d["project"] = [proj]
-            else:
-                d["project"] = []
-        return data
+class UserInterface:
+    """Main UI class for the users module"""
+    
+    def __init__(self):
+        self.db_manager = DatabaseManager()
+        self.user_service = UserService(self.db_manager)
+        self.log_service = LogService(self.db_manager)
+        self.project_service = ProjectService(self.db_manager)
+        self.profile_service = ProfileService(self.db_manager)
+        SessionManager.initialize_session()
 
-    # 📝 Update team member details
-    def update_member(original_email, updated_data):
-        # Get the current member data to compare projects
-        current_member = collection.find_one({"email": original_email})
-        current_projects = current_member.get("project", []) if current_member else []
-        new_projects = updated_data.get("project", [])
-        
-        # Find removed projects
-        removed_projects = [proj for proj in current_projects if proj not in new_projects]
-        
-        # Update the user document
-        collection.update_one(
-            {"email": original_email},
-            {"$set": updated_data}
-        )
-        
-        # Remove user from projects table for removed projects
-        if removed_projects:
-            projects_collection = db["projects"]
-            username = original_email.split("@")[0]  # Extract username from email
-            
-            for project_name in removed_projects:
-                # Remove the user from the project's user list
-                projects_collection.update_one(
-                    {"project_name": project_name},
-                    {"$pull": {"users": username}}
-                )
+    def sync_user_project_assignment(self, username, project_name, action="add"):
+        try:
+            user_email = self._get_user_email_from_username(username)
+            user_data = self.user_service.fetch_user_data(user_email)
+            if not user_data:
+                st.warning(f"User {username} not found in database")
+                return False
+            current_projects = user_data.get("project", [])
+            if action == "add" and project_name not in current_projects:
+                current_projects.append(project_name)
+                self.user_service.update_member(user_email, {"project": current_projects})
+                return True
+            elif action == "remove" and project_name in current_projects:
+                current_projects.remove(project_name)
+                self.user_service.update_member(user_email, {"project": current_projects})
+                return True
+            return False
+        except Exception as e:
+            st.error(f"Error syncing user project assignment: {str(e)}")
+            return False
 
-    # Session state
-    if "selected_member" not in st.session_state:
-        st.session_state.selected_member = None
-    if "edit_mode" not in st.session_state:
-        st.session_state.edit_mode = False
+    def bulk_sync_project_assignments(self, project_name, stage_assignments):
+        try:
+            assigned_users = set()
+            for stage_name, assignment_data in stage_assignments.items():
+                if isinstance(assignment_data, dict):
+                    main_assignee = assignment_data.get("assigned_to", "")
+                    if main_assignee:
+                        assigned_users.add(main_assignee)
+                    substages = assignment_data.get("substages", {})
+                    for _, substage_data in substages.items():
+                        if isinstance(substage_data, dict):
+                            substage_assignee = substage_data.get("assigned_to", "")
+                            if substage_assignee:
+                                assigned_users.add(substage_assignee)
+            success_count = 0
+            for username in assigned_users:
+                if self.sync_user_project_assignment(username, project_name, "add"):
+                    success_count += 1
+            return success_count
+        except Exception as e:
+            st.error(f"Error in bulk sync project assignments: {str(e)}")
+            return 0
 
+    def _get_user_email_from_username(self, username):
+        if "@" in username:
+            return username
+        possible_patterns = [f"{username}@v-shesh.com", f"{username}@company.com"]
+        for email_pattern in possible_patterns:
+            user_data = self.user_service.fetch_user_data(email_pattern)
+            if user_data:
+                return email_pattern
+        return f"{username}@v-shesh.com"
 
-    # 🔙 Navigation helpers
-    def go_back():
-        st.session_state.selected_member = None
-        st.session_state.edit_mode = False
+    def display_profile_image(self, username, width=100):
+        profile_image_data = self.profile_service.get_profile_image(username)
+        if profile_image_data:
+            UIHelpers.display_profile_image(profile_image_data, width, width)
+        else:
+            default_image_data = self.profile_service.get_default_profile_image()
+            UIHelpers.display_profile_image(default_image_data, width, width)
 
-    def display_profile(username, w):
-        collection2 = db["documents"]
-        user_doc = collection2.find_one({"username": username})
-        profile_image_data = user_doc.get("profile_image", {}).get("data", None)
-        if  profile_image_data:# Decode base64 and display image
-            st.markdown(
-                f"""
-                <img src="data:image/png;base64,{profile_image_data}" 
-                    style="width:100px; height:100px; object-fit:cover; border-radius:10%;">
-                """,
-                unsafe_allow_html=True,
-            )
-        else:           # Default image if none uploaded
-            user_doc = collection2.find_one({"username": "admin"}) # change it to default user later
-            profile_image_data = user_doc.get("profile_image", {}).get("data", None)
-            st.markdown(
-            f"""
-            <img src="data:image/png;base64,{profile_image_data}" 
-                style="width:100px; height:100px; object-fit:cover; border-radius:10%;">
-            """,
-            unsafe_allow_html=True,
-             )
-
-
-    # 📋 Profile Page
-    def show_profile(member):
-        col1, col2 = st.columns([1, 8])  # Narrow left column for back arrow
-        with col1:
-            if st.button("←", key="back_arrow"):
-                go_back()
-                st.rerun()
+    def show_profile(self, member_email):
+        member = self.user_service.fetch_user_data(member_email)
+        if not member:
+            st.error("❌ User not found in database")
+            SessionManager.go_back()
+            st.rerun()
+            return
+        col2 = UIHelpers.create_back_button()
         with col2:
             st.title(member["name"])
-
-        display_profile(member["username"], w=100)
-
+        self.display_profile_image(member["username"], width=120)
         if st.session_state.edit_mode:
-            with st.form("edit_form"):
-                st.text_input("Name", value=member["name"], disabled=True)
-                st.text_input("Email", value=member["email"], disabled=True)
-                st.text_input("Role", value=member["role"], disabled=True)
-                st.text_input("Branch", value=member["branch"], disabled=True)
-
-                # Get all unique projects
-                all_projects = sorted({
-                    p for m in load_team_data()
-                    if isinstance(m.get("project"), list)
-                    for p in m.get("project", [])
-                })
-
-                projects = st.multiselect(
-                    "Projects",
-                    options=all_projects,
-                    default=[p for p in member.get("project", []) if p in all_projects],
-                )
-
-                submitted = st.form_submit_button("💾 Save Projects")
-                if submitted:
-                    # Get current projects before update to track changes
-                    current_projects = member.get("project", [])
-                    
-                    # Update member with new projects
-                    update_member(member["email"], {"project": projects})
-                    
-                    # Also add user to newly assigned projects in projects table
-                    projects_collection = db["projects"]
-                    username = member["email"].split("@")[0]
-                    
-                    # Find newly added projects
-                    new_projects = [proj for proj in projects if proj not in current_projects]
-                    
-                    # Add user to new projects
-                    for project_name in new_projects:
-                        projects_collection.update_one(
-                            {"project_name": project_name},
-                            {"$addToSet": {"users": username}},  # $addToSet prevents duplicates
-                            upsert=True  # Create project document if it doesn't exist
-                        )
-                    
-                    st.success("✅ Projects updated successfully!")
-                    st.session_state.selected_member["project"] = projects
-                    st.session_state.edit_mode = False
-                    st.rerun()
+            self._show_edit_form(member)
         else:
-            st.markdown(f"**Email:** {member['email']}")
-            st.markdown(f"**Role:** {member['position']}")
-            st.markdown(f"**Branch:** {member['branch']}")
-            projects = member.get("project", [])
-            if isinstance(projects, list):
-                    project_str = ", ".join(projects) if projects else "None"
-            else:
-                    project_str = projects  # fallback if it's not a list
-            st.write(f"**Current Projects:** {project_str}")
+            self._show_profile_details(member)
 
-            completed_raw = member.get("completed_projects", [])
-            completed_projects = (
-                [p for p in completed_raw if isinstance(p, str) and p.strip()]
-                if isinstance(completed_raw, list)
-                else []
+    def _show_edit_form(self, member):
+        with st.form("edit_form"):
+            st.text_input("👤 Name", value=member["name"], disabled=True)
+            st.text_input("📧 Email", value=member["email"], disabled=True)
+            st.text_input("🛠 Role", value=member["role"], disabled=True)
+            st.text_input("🏢 Branch", value=member["branch"], disabled=True)
+            all_projects = self.user_service.get_all_projects()
+            projects = st.multiselect(
+                "📂 Projects",
+                options=all_projects,
+                default=[p for p in member.get("project", []) if p in all_projects],
             )
-            if isinstance(completed_projects, list):
-                completed_project_str = ", ".join(completed_projects) if completed_projects else "None"
-            else:
-                completed_project_str = projects  # fallback if it's not a list
-            st.write(f"**Completed Projects:** {completed_project_str}")
+            submitted = st.form_submit_button("💾 Save Projects")
+            if submitted:
+                self._handle_project_update(member, projects)
 
-            if st.button("✏️ Edit Profile"):
-                st.session_state.edit_mode = True
-                st.rerun()
+    def _handle_project_update(self, member, projects):
+        current_projects = member.get("project", [])
+        self.user_service.update_member(member["email"], {"project": projects})
+        username = DataUtils.extract_username_from_email(member["email"])
+        if username:
+            new_projects = [proj for proj in projects if proj not in current_projects]
+            if new_projects:
+                self.project_service.add_user_to_projects(username, new_projects)
+        st.success("✅ Projects updated successfully!")
+        SessionManager.set_edit_mode(False)
+        st.rerun()
 
-            # 🔍 Show Everyday Log if current user is a manager or admin
-            if st.session_state.get("role") in ["manager", "admin"]:
-                logs_collection = get_logs_collection()
+    def _show_profile_details(self, member):
+        st.markdown(f"""
+        <div style="padding:15px; border-radius:10px; background-color:#f8f9fa;">
+            <p><b>Email:</b> {member['email']}</p>
+            <p><b>Role:</b> <span style="background:#17a2b8; color:white; padding:3px 6px; border-radius:5px;">{member['role']}</span></p>
+            <p><b>Branch:</b> <span style="background:#28a745; color:white; padding:3px 6px; border-radius:5px;">{member['branch']}</span></p>
+            <p><b>Projects:</b> {DataUtils.format_project_list(member.get('project', []))}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("✏️ Edit Profile"):
+            SessionManager.set_edit_mode(True)
+            st.rerun()
 
-                # ✅ Date selector
-                selected_log_date = st.date_input("📅 Select a date to view logs", value=date.today(), key="log_view_date")
-
-                # ✅ Query logs for selected member on that date
-                query_date_str = selected_log_date.strftime("%Y-%m-%d")
-                email = member.get("email", "")
-                if not isinstance(email, str) or "@" not in email:
-                    st.warning("⚠️ Cannot retrieve logs: Invalid email format.")
-                    return
-
-                query_username = email.split("@")[0]
-                logs = list(logs_collection.find(
-                    {"Date": query_date_str, "Username": query_username},
-                    {"_id": 0, "Date": 0, "Username": 0}
-                ))
-
-                if logs:
-                    import pandas as pd
-                    df_logs = pd.DataFrame(logs)
-                    st.dataframe(df_logs, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No logs found for this date.")
-
-
-    # 👥 Team View Page
-    def show_team():
-        team_data = load_team_data()
-        current_role = st.session_state.get("role")
-        if current_role == "manager":
-            team_data = [member for member in team_data if member.get("role") == "user"]
+    def show_team(self):
+        team_data = self.user_service.load_team_data()
+        current_role = SessionManager.get_current_role()
+        team_data = DataUtils.filter_team_by_role(team_data, current_role)
         df = pd.DataFrame(team_data)
+        if df.empty:
+            st.info("👥 No team members found.")
+            return
+        col_refresh, _ = st.columns([1, 4])
+        with col_refresh:
+            UIHelpers.create_refresh_button("🔄 Refresh")
+        branch_filter, project_filter, search_query = UIHelpers.create_filter_controls(df)
+        filtered = DataUtils.apply_filters(df, branch_filter, project_filter, search_query)
+        if filtered.empty:
+            st.info("🔍 No team members match the current filters.")
+            return
+        self._display_team_grid(filtered)
 
-        # --- Filters ---
-        col1, col2 = st.columns(2)
-        with col1:
-            branch_filter = st.selectbox("📍 Filter by Branch", ["All"] + sorted(df["branch"].dropna().unique()))
-
-        with col2:
-            # ✅ Flatten all project lists into a single unique list
-            all_projects = sorted({
-                p for projs in df["project"]
-                if isinstance(projs, list)
-                for p in projs
-            })
-            project_filter = st.selectbox("📁 Filter by Project", ["All"] + all_projects)
-
-        # --- Search by Name ---
-        search_query = st.text_input("🔍 Search by name")
-
-        # --- Apply Filters ---
-        filtered = df.copy()
-        if branch_filter != "All":
-            filtered = filtered[filtered["branch"] == branch_filter]
-        if project_filter != "All":
-            filtered = filtered[
-                filtered["project"].apply(
-                    lambda projs: isinstance(projs, list) and project_filter in projs
-                )
-            ]
-        if search_query:
-            filtered = filtered[filtered["name"].str.contains(search_query, case=False)]
-
-        # ✅ Sort by name alphabetically
-        filtered = filtered.sort_values(by="name", ascending=True, na_position='last')
-
-        # --- Display Team Members (left-to-right layout) ---
-        num_columns = 2  # Adjust for more per row if needed
-        rows = [filtered.iloc[i:i+num_columns] for i in range(0, len(filtered), num_columns)]
-
+    def _display_team_grid(self, filtered_df):
+        num_columns = 3
+        rows = DataUtils.chunk_dataframe(filtered_df, num_columns)
         for row_chunk in rows:
             cols = st.columns(num_columns)
             for idx, (_, member) in enumerate(row_chunk.iterrows()):
-                with cols[idx]:
-                    display_profile(member["username"], w=100)
-                    name = str(member.get("name", "Unnamed"))
-                    email = str(member.get("email", f"key_{name}"))
-                    if st.button(name, key=email):
-                        st.session_state.selected_member = member.to_dict()
-                        st.rerun()
+                if idx < len(cols):
+                    with cols[idx]:
+                        st.markdown("<div class='member-card' style='padding:10px; border-radius:10px;'>", unsafe_allow_html=True)
+                        self.display_profile_image(member["username"], width=80)
+                        st.markdown(f"**{ValidationUtils.sanitize_string(member.get('name', 'Unnamed'))}**")
+                        st.caption(f"{member.get('role', 'Unknown')} | {member.get('branch', 'Unknown')}")
+                        if st.button("View Profile", key=member.get("email", f"key_{idx}")):
+                            SessionManager.select_member(member["email"])
+                            st.rerun()
+                        st.markdown("</div>", unsafe_allow_html=True)
 
-    # 🚦 Routing
-    if st.session_state.selected_member:
-        show_profile(st.session_state.selected_member)
-    else:
-        show_team()
+    def render(self):
+        if st.session_state.selected_member_email:
+            self.show_profile(st.session_state.selected_member_email)
+        else:
+            self.show_team()
+
+def run():
+    ui = UserInterface()
+    ui.render()
