@@ -79,8 +79,9 @@ def _handle_create_project(
     # --- Construct project document ---
     from datetime import datetime
     now = datetime.now()
-    levels = [s.get("stage_name", f"Stage {i+1}") for i, s in stage_assignments.values()] \
-             if isinstance(stage_assignments, dict) else []
+    levels  = [s.get("stage_name", f"Stage {i+1}") for i, s in enumerate(stage_assignments.values())] \
+         if isinstance(stage_assignments, dict) else []
+
 
     project_data = {
         "name": name,
@@ -128,7 +129,6 @@ def _handle_create_project(
     else:
         st.error("❌ Failed to create project")
         return None
-
                                                 
 # UPDATED FUNCTION: Enhanced save project handler with date validation
 # update logic in https://claude.ai/chat/22923190-8e0c-458d-a860-ed65ffb2a9a0

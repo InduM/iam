@@ -36,7 +36,7 @@ class ClientsFrontend:
         # Action buttons
         col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
-            if st.button("➕ New Client"):
+            if st.button("➕ New Opportunity"):
                 navigate_to_view("create")
         with col2:
             if st.button("🔄 Refresh"):
@@ -202,7 +202,7 @@ class ClientsFrontend:
     
     def show_edit_form(self):
         """Display the edit client form"""
-        st.title("✏ Edit Client")
+        st.title("✏ Edit Opportunity")
         
         # Back button
         if st.button("← Back"):

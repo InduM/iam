@@ -323,7 +323,18 @@ def show_create_form():
 
 
     if st.button("✅ Create Project", use_container_width=True):
-        _handle_create_project(name, client, description, start, due, selected_subtemplate,co_manager   )
+        _handle_create_project(
+        name,
+        client,
+        description,
+        start,
+        due,
+        st.session_state.get("selected_template", ""),   # template
+        st.session_state.get("selected_subtemplate", ""),# subtemplate
+        stage_assignments,                               # stage_assignments
+        st.session_state.get("username", "admin"),       # created_by
+        [co_manager] if co_manager else []               # co_managers (list)
+    )
 
 
 def show_edit_form():
