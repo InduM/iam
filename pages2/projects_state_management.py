@@ -91,8 +91,6 @@ def _clear_edit_mode_cache(project_id):
         del st.session_state[key]
 
 
-
-
 def _initialize_edit_mode_state(project_id):
     """Enhanced initialize edit mode with aggressive cache clearing and fresh substage loading"""
     # Clear all cached data first

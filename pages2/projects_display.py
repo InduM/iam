@@ -1,6 +1,8 @@
 import streamlit as st
 from datetime import datetime
 import time
+import pandas as pd
+from typing import List, Dict, Any
 
 from utils.utils_project_core import (
     format_level,
@@ -16,6 +18,178 @@ from .project_logic import (
 )
 from .project_substage_manager import render_level_checkboxes_with_substages
 # Main Functions
+
+import pandas as pd
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
+import streamlit as st
+
+st.markdown("""
+    <style>
+    /* Remove grey horizontal rules inside expanders */
+    div[data-testid="stExpander"] hr {
+        display: none;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+def render_projects_table(projects):
+    """Ag-Grid table with inline Edit/Delete and robust confirmation that disappears on Cancel/Yes."""
+    if not projects:
+        st.info("No projects to display.")
+        return
+
+    # --- one-time session state ---
+    if "projects_grid_version" not in st.session_state:
+        st.session_state.projects_grid_version = 0
+    if "pending_delete_id" not in st.session_state:
+        st.session_state.pending_delete_id = None
+
+    # --- rows ---
+    rows = []
+    for p in projects:
+        levels = p.get("levels", [])
+        level_idx = int(p.get("level", -1))
+        # format_level comes from utils.utils_project_core
+        current_level_name = format_level(level_idx, levels)
+        stage_assignments = p.get("stage_assignments", {})
+        overdue = get_overdue_stages(stage_assignments, levels, level_idx)
+
+        cms = p.get("co_managers", [])
+        cm_text = ", ".join(
+            f"{cm.get('user','?')} ({cm.get('access','full')}"
+            + (f": {', '.join(cm.get('stages', []))}" if cm.get('access') == 'limited' else "")
+            + ")"
+            for cm in cms
+        )
+
+        rows.append({
+            "ID": p.get("id", ""),  # hidden in grid; used internally
+            "Name": p.get("name", ""),
+            "Template": p.get("template", ""),
+            "Subtemplate / Client": p.get("subtemplate", "") if p.get("template") == "Onwards" else p.get("client", ""),
+            "Start": p.get("startDate", ""),
+            "Due": p.get("dueDate", ""),
+            "Current Level": current_level_name,
+            "Manager": p.get("created_by", ""),
+            "Co-Managers": cm_text,
+            "Overdue Stages": ", ".join([o["stage_name"] for o in overdue]) if overdue else "",
+            "EditAction": "",
+            "DeleteAction": "",
+        })
+
+    df = pd.DataFrame(rows)
+
+    # --- grid options ---
+    gb = GridOptionsBuilder.from_dataframe(df)
+    gb.configure_default_column(editable=False, wrapText=True, autoHeight=True, resizable=True)
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=15)
+    gb.configure_side_bar()
+
+    # Hide internal ID column
+    gb.configure_column("ID", hide=True)
+
+    # Inline buttons via JS: write row ID into the action cell to signal click
+    edit_button_renderer = JsCode("""
+    class BtnCellRenderer {
+      init(params) {
+        this.params = params;
+        this.eGui = document.createElement('button');
+        this.eGui.innerText = '✏ Edit';
+        this.eGui.style.padding = '2px 8px';
+        this.eGui.style.cursor = 'pointer';
+        this.eGui.addEventListener('click', () => {
+          params.api.stopEditing();
+          params.node.setDataValue('EditAction', params.data.ID);
+        });
+      }
+      getGui() { return this.eGui; }
+    }
+    """)
+
+    delete_button_renderer = JsCode("""
+    class BtnCellRenderer {
+      init(params) {
+        this.params = params;
+        this.eGui = document.createElement('button');
+        this.eGui.innerText = '🗑 Delete';
+        this.eGui.style.padding = '2px 8px';
+        this.eGui.style.cursor = 'pointer';
+        this.eGui.style.color = 'red';
+        this.eGui.addEventListener('click', () => {
+          params.api.stopEditing();
+          params.node.setDataValue('DeleteAction', params.data.ID);
+        });
+      }
+      getGui() { return this.eGui; }
+    }
+    """)
+
+    gb.configure_column("EditAction", headerName="", cellRenderer=edit_button_renderer, width=100, pinned="right")
+    gb.configure_column("DeleteAction", headerName="", cellRenderer=delete_button_renderer, width=110, pinned="right")
+
+    grid_options = gb.build()
+    # Let grid grow with content (avoids fixed 400px)
+    grid_options["domLayout"] = "autoHeight"
+
+    # Bumpable key ensures a fresh grid after click/cancel/confirm
+    grid_key = f"projects_grid_{st.session_state.projects_grid_version}"
+
+    grid_response = AgGrid(
+        df,
+        gridOptions=grid_options,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        fit_columns_on_grid_load=True,
+        allow_unsafe_jscode=True,
+        key=grid_key,
+        reload_data=True
+    )
+
+    # --- handle inline button clicks ---
+    data = grid_response.get("data")
+    if data is not None and not data.empty:
+        # iterate with index so we can clear the cell to prevent re-trigger on rerun
+        for idx, row in data.iterrows():
+            # EDIT
+            if row.get("EditAction"):
+                pid = row["EditAction"]
+                st.session_state.edit_project_id = pid
+                st.session_state.view = "edit"
+                # clear trigger & force grid refresh
+                data.at[idx, "EditAction"] = ""
+                st.session_state.projects_grid_version += 1
+                st.rerun()
+
+            # DELETE → show confirm, but do NOT delete yet
+            if row.get("DeleteAction"):
+                pid = row["DeleteAction"]
+                role = st.session_state.get("role", "")
+                if role != "user":
+                    st.session_state.pending_delete_id = pid
+                    # clear trigger & force grid refresh so it doesn't auto-reopen on rerun
+                    data.at[idx, "DeleteAction"] = ""
+                    st.session_state.projects_grid_version += 1
+                    st.rerun()
+                else:
+                    st.error("🚫 No permission to delete.")
+
+    # --- confirmation UI (disappears on Cancel or Yes) ---
+    if st.session_state.pending_delete_id:
+        pid = st.session_state.pending_delete_id
+        proj = next((p for p in projects if p.get("id") == pid), None)
+        if proj:
+            st.warning(f"⚠️ Are you sure you want to delete project: **{proj.get('name','')}**?")
+            c1, c2 = st.columns(2)
+            if c1.button("✅ Yes, Delete", key="confirm_yes"):
+                _handle_project_deletion(pid, proj)
+                st.session_state.pending_delete_id = None
+                st.session_state.projects_grid_version += 1
+                st.rerun()
+            if c2.button("❌ Cancel", key="confirm_no"):
+                st.session_state.pending_delete_id = None  # <- remove pending state
+                st.session_state.projects_grid_version += 1  # <- force fresh grid
+                st.rerun()
+
+
 def render_project_card(project, index):
     """Render individual project card with substage validation"""
     pid = project.get("id", f"auto_{index}")
@@ -68,8 +242,11 @@ def render_project_card(project, index):
         # Show stage assignments summary
         stage_assignments = project.get("stage_assignments", {})
         
-        # Show substage completion summary
-        render_substage_summary_widget(project)
+        # Show substage completion summary (without grey divider)
+        with st.container():
+            render_substage_summary_widget(project)
+            # override the default expander/divider styling
+            st.markdown("<hr style='border:none; margin:0;'>", unsafe_allow_html=True)
         
          # --- NEW: Recent Activity log (Co-Manager related only) ---
         from backend.log_backend import ProjectLogManager
@@ -124,7 +301,7 @@ def render_project_card(project, index):
         for i in range(len(levels)):
             auto_advance_key = f"auto_advance_success_{pid}_{i}"
             if st.session_state.get(auto_advance_key, False):
-                st.success(f"🎉 Stage {i + 1} completed!")
+                st.success(f"Stage {i + 1} completed!")
                 st.session_state[auto_advance_key] = False
             
             auto_uncheck_key = f"auto_uncheck_success_{pid}_{i}"

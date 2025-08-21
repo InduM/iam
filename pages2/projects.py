@@ -11,7 +11,7 @@ from utils.utils_project_form import ( initialize_create_form_state,render_custo
 from .projects_state_management import (_render_back_button,_render_edit_header_with_refresh,_initialize_edit_mode_state)
 from .project_substage_manager import render_progress_section
 from .projects_display import (
-    render_project_card, render_level_checkboxes_with_substages)
+    render_project_card, render_level_checkboxes_with_substages,render_projects_table)
 from .project_logic import (
     _handle_create_project,
     handle_save_project,
@@ -71,8 +71,8 @@ def show_dashboard():
     else:
         st.caption(f"Showing all projects (logged in as **{username}**, role: {role})")
 
-    # --- Top buttons ---
-    col1, col2, col3 = st.columns([1, 1, 1])
+        # --- Top buttons ---
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
     with col1:
         if st.button("➕ New Project", use_container_width=True):
             st.session_state.view = "create"
@@ -82,8 +82,15 @@ def show_dashboard():
             st.session_state.refresh_projects = True
             st.rerun()
     with col3:
-        # Export button will appear after filters are applied
         export_trigger = st.button("📤 Export to Excel", use_container_width=True)
+    with col4:
+        view_mode = st.segmented_control(
+            options=["Cards", "Table"],
+            default="Cards",
+            key="projects_view_mode",
+            label="View Mode",                # 🔑 hides label
+            label_visibility="collapsed"        # 🔑 hides it but keeps vertical alignment
+        )
 
     # --- Filter bar ---
     with st.container():
@@ -152,13 +159,16 @@ def show_dashboard():
         )
 
     # --- Display projects in 2-column layout ---
-    cols = st.columns(2)
-    for i, project in enumerate(filtered_projects):
-        with cols[i % 2]:
-            st.markdown("<div class='project-card'>", unsafe_allow_html=True)
-            render_project_card(project, i)
-            st.markdown("</div>", unsafe_allow_html=True)
-            
+    if st.session_state.get("projects_view_mode", "Cards") == "Table":
+        render_projects_table(filtered_projects)
+    else:
+        cols = st.columns(2)
+        for i, project in enumerate(filtered_projects):
+            with cols[i % 2]:
+                st.markdown("<div class='project-card'>", unsafe_allow_html=True)
+                render_project_card(project, i)
+                st.markdown("</div>", unsafe_allow_html=True)
+                
 def _get_template_progress_levels(filter_template, filter_subtemplate="All"):
     """Get progress levels based on selected template and subtemplate"""
     if filter_template == "All":
